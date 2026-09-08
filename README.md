@@ -6,7 +6,7 @@
 
 - VLESS-Reality：`443/tcp`，TCP 原始流（sing-box 中 `type: vless`，没有 WebSocket/gRPC）。严格说它不是“raw 协议”，而是 VLESS over TCP + Reality。
 - AnyTLS：`8443/tcp`
-- Hysteria2：`8444/udp`
+- Hysteria2：随机高位 `udp` 端口（默认范围 `20000-65535`，每次重建时重新选择空闲端口）
 
 ## 使用
 
@@ -19,7 +19,7 @@ less vps-node.sh
 sudo bash vps-node.sh
 
 # 显式指定参数
-sudo env UUID='你的UUID' VLESS_PORT=443 ANYTLS_PORT=8443 HY2_PORT=8444 \
+sudo env UUID='你的UUID' VLESS_PORT=443 ANYTLS_PORT=8443 HY2_PORT=auto \
   SNI=www.microsoft.com TAG=my-vps bash vps-node.sh
 ```
 
@@ -57,7 +57,7 @@ sudo env ACTION=uninstall bash vps-node.sh
 
 ## 伪装域名选择
 
-`SNI=auto` 会从脚本内的候选站点逐个测试 VPS 到其 `TCP/443` 的连接耗时，选择当前测得最低者。它是网络路径延迟选择，不是严格的地理距离，也不保证长期最优。需要固定时直接设置 `SNI=www.microsoft.com` 等候选域名。
+`SNI=auto` 会从脚本内的候选站点逐个测试 VPS 到其 `TCP/443` 的连接耗时，选择当前测得最低者。候选站点不包含 `www.cloudflare.com`，当前包括 Microsoft、Apple、Google、Bing、Yahoo。它是网络路径延迟选择，不是严格的地理距离，也不保证长期最优。需要固定时直接设置 `SNI=www.microsoft.com` 等候选域名。
 
 ## VPS 安全组
 
@@ -65,7 +65,7 @@ sudo env ACTION=uninstall bash vps-node.sh
 
 - `443/tcp`（VLESS-Reality）
 - `8443/tcp`（AnyTLS）
-- `8444/udp`（Hysteria2）
+- `随机高位 udp 端口`（Hysteria2；安装完成后以输出的实际端口和分享链接为准）
 
 如果只需要某个协议，可在安装后关闭对应端口和入站配置。修改配置后先运行：
 

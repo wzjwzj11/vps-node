@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 #
 # vps-node.sh — 自建节点一键脚本 (sing-box)
-# 协议: VLESS-Reality (TCP/443) + Hysteria2 (UDP/8443)
-# 特点: 只从官方源下载 (SagerNet/sing-box GitHub Releases)，无第三方中转，脚本透明可审计
+# 协议: VLESS-Reality (TCP/443) + AnyTLS (TCP/8443) + Hysteria2 (随机高位 UDP 端口)
+# 特点: 只从官方源下载 (SagerNet/sing-box GitHub Releases)，无第三方中转
 # 用法: bash <(curl -fsSL <你的脚本地址>)     或     bash vps-node.sh
 # 可自定义环境变量(全部可选):
-#   UUID=...  VLESS_PORT=443  ANYTLS_PORT=8443  HY2_PORT=8444  SNI=auto  TAG=myserver
+#   UUID=...  VLESS_PORT=443  ANYTLS_PORT=8443  HY2_PORT=auto  SNI=auto  TAG=myserver
 #
 set -euo pipefail
 
@@ -14,7 +14,7 @@ set -euo pipefail
 UUID="${UUID:-}"
 VLESS_PORT="${VLESS_PORT:-443}"
 ANYTLS_PORT="${ANYTLS_PORT:-8443}"
-HY2_PORT="${HY2_PORT:-8444}"
+HY2_PORT="${HY2_PORT:-auto}"
 SNI="${SNI:-auto}"                 # auto=从候选伪装站中选择 TCP/443 延迟最低者
 TAG="${TAG:-vps}"
 SB_VER="${SB_VER:-}"              # 留空=自动取最新版
@@ -32,10 +32,41 @@ die()  { echo "${RED}[✗]${NC} $*" >&2; exit 1; }
 port_in_use() {
   local port="$1" proto="$2"
   if command -v ss >/dev/null 2>&1; then
-    ss -H -ltnup 2>/dev/null | awk -v p=":${port}" -v proto="$proto" '$1 ~ proto && $5 ~ p {found=1} END {exit !found}'
+    if [[ "$proto" == "tcp" ]]; then
+      ss -H -ltn 2>/dev/null | awk -v p=":${port}" '$4 ~ p {found=1} END {exit !found}'
+    else
+      ss -H -lun 2>/dev/null | awk -v p=":${port}" '$5 ~ p {found=1} END {exit !found}'
+    fi
   else
     return 1
   fi
+}
+
+random_high_port() {
+  local candidate
+  for _ in $(seq 1 100); do
+    candidate="$(od -An -N2 -tu2 /dev/urandom | tr -d ' ')"
+    candidate=$((20000 + candidate % 45536))
+    if ! port_in_use "$candidate" udp; then
+      printf '%s' "$candidate"
+      return 0
+    fi
+  done
+  die "无法找到空闲的随机高位 UDP 端口"
+}
+
+choose_sni() {
+  [[ "$SNI" == "auto" ]] || return 0
+  local best="" best_ms=999999 host ms
+  # 不使用 www.cloudflare.com；以 VPS 到候选站 TCP/443 建连耗时作为路径近似
+  for host in www.microsoft.com www.apple.com www.google.com www.bing.com www.yahoo.com; do
+    ms="$(curl -4sk --connect-timeout 4 --max-time 5 -o /dev/null -w '%{time_connect}' "https://$host/" 2>/dev/null || true)"
+    [[ "$ms" =~ ^[0-9]+\.[0-9]+$ ]] || continue
+    ms="$(awk -v t="$ms" 'BEGIN { printf "%d", t*1000 }')"
+    if (( ms < best_ms )); then best="$host"; best_ms="$ms"; fi
+  done
+  SNI="${best:-www.microsoft.com}"
+  info "伪装域名: $SNI（TCP/443 实测约 ${best_ms}ms；仅作路径延迟参考）"
 }
 
 show_status() {
@@ -48,7 +79,11 @@ show_status() {
   echo "BBR: $(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo unavailable) / qdisc: $(sysctl -n net.core.default_qdisc 2>/dev/null || echo unavailable)"
   if command -v sing-box >/dev/null 2>&1; then sing-box version | head -1; else echo "sing-box: 未安装"; fi
   systemctl is-active sing-box 2>/dev/null || true
-  for pair in "${VLESS_PORT}:tcp" "${ANYTLS_PORT}:tcp" "${HY2_PORT}:udp"; do
+  local status_hy2_port="$HY2_PORT"
+  if [[ "$status_hy2_port" == "auto" && -r /etc/sing-box/config.json ]] && command -v jq >/dev/null 2>&1; then
+    status_hy2_port="$(jq -r '.inbounds[] | select(.tag=="hy2") | .listen_port' /etc/sing-box/config.json 2>/dev/null || echo auto)"
+  fi
+  for pair in "${VLESS_PORT}:tcp" "${ANYTLS_PORT}:tcp" "${status_hy2_port}:udp"; do
     p="${pair%%:*}"; proto="${pair##*:}"
     port_in_use "$p" "$proto" && echo "端口 $p/$proto: 已监听" || echo "端口 $p/$proto: 未监听"
   done
@@ -56,7 +91,7 @@ show_status() {
 
 create_shortcut() {
   local target=/usr/local/bin/sb
-  local raw_url="https://raw.githubusercontent.com/wzjwzj11/vps-node/v1.0.1/vps-node.sh"
+  local raw_url="https://raw.githubusercontent.com/wzjwzj11/vps-node/v1.0.2/vps-node.sh"
   cat > "$target" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
@@ -162,6 +197,9 @@ for c in curl tar openssl jq; do command -v "$c" >/dev/null || NEED+=("$c"); don
 # jq 在 alpine 叫 jq, 其它同名; openssl 必需(生成自签证书)
 [[ ${#NEED[@]} -gt 0 ]] && { info "安装依赖: ${NEED[*]}"; install_pkgs "${NEED[@]}"; }
 
+[[ "$HY2_PORT" == "auto" ]] && HY2_PORT="$(random_high_port)"
+choose_sni
+
 # ---------- 1. 安装 sing-box (官方 GitHub Release) ----------
 for pair in "${VLESS_PORT}:tcp" "${ANYTLS_PORT}:tcp" "${HY2_PORT}:udp"; do
   p="${pair%%:*}"; proto="${pair##*:}"
@@ -228,21 +266,6 @@ if [[ ! -s "$CERT" ]]; then
   chmod 600 "$KEY"
 fi
 ok "密钥就绪"
-
-# auto 只按 VPS 到目标站的 TCP/443 建连耗时选择；它不是地理位置保证
-if [[ "$SNI" == "auto" ]]; then
-  BEST=""; BEST_MS=999999
-  for host in www.microsoft.com www.cloudflare.com www.apple.com www.google.com www.bing.com; do
-    start="$(date +%s%3N 2>/dev/null || date +%s000)"
-    if timeout 4 bash -c "</dev/tcp/$host/443" 2>/dev/null; then
-      end="$(date +%s%3N 2>/dev/null || date +%s000)"; ms=$((end-start))
-      [[ $ms -lt $BEST_MS ]] && { BEST="$host"; BEST_MS=$ms; }
-    fi
-  done
-  SNI="${BEST:-www.microsoft.com}"
-  info "伪装域名: $SNI（TCP/443 实测约 ${BEST_MS}ms；仅作连接延迟参考）"
-fi
-
 
 cat > "$CONF_DIR/config.json" <<EOF
 {
