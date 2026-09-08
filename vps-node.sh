@@ -59,45 +59,66 @@ random_high_port() {
   die "无法找到空闲的随机高位 UDP 端口"
 }
 
+probe_host() {
+  local host="$1" i sample tcp tls
+  local -a tcp_values=() tls_values=()
+  for i in 1 2 3; do
+    sample="$(curl -4sk --connect-timeout 4 --max-time 8 -o /dev/null -w '%{time_connect} %{time_appconnect}' "https://${host}/" 2>/dev/null || true)"
+    tcp="${sample%% *}"; tls="${sample##* }"
+    [[ "$tcp" =~ ^[0-9]+\.[0-9]+$ ]] && tcp_values+=("$tcp")
+    [[ "$tls" =~ ^[0-9]+\.[0-9]+$ && "$tls" != "0.000000" ]] && tls_values+=("$tls")
+  done
+  if ((${#tcp_values[@]} == 0)); then
+    printf '%s\n' "- -"; return 0
+  fi
+  # 中位数比单次采样更不容易被 CDN/瞬时抖动误导
+  tcp="$(printf '%s\n' "${tcp_values[@]}" | sort -n | awk '{a[NR]=$1} END{printf "%d", a[int((NR+1)/2)]*1000}')"
+  if ((${#tls_values[@]} > 0)); then
+    tls="$(printf '%s\n' "${tls_values[@]}" | sort -n | awk '{a[NR]=$1} END{printf "%d", a[int((NR+1)/2)]*1000}')"
+  else
+    tls="-"
+  fi
+  printf '%s %s\n' "$tcp" "$tls"
+}
+
 scan_reality_targets() {
   command -v openssl >/dev/null 2>&1 || die "扫描器需要 openssl"
   command -v curl >/dev/null 2>&1 || die "扫描器需要 curl"
-  local targets="$REALITY_TARGETS" host result ms tls alpn cert
-  printf '%-30s %-8s %-8s %-8s %-35s %s\n' "目标" "状态" "TLS" "ALPN" "证书" "延迟"
-  printf '%-30s %-8s %-8s %-8s %-35s %s\n' "------------------------------" "--------" "--------" "--------" "-----------------------------------" "------"
+  local targets="$REALITY_TARGETS" host result tcp_ms tls_ms cert
+  printf '%-30s %-8s %-8s %-8s %-35s %-10s %-10s\n' "目标" "状态" "TLS" "ALPN" "证书" "TCP延迟" "TLS延迟"
+  printf '%-30s %-8s %-8s %-8s %-35s %-10s %-10s\n' "------------------------------" "--------" "--------" "--------" "-----------------------------------" "----------" "----------"
   IFS=',' read -ra target_list <<< "$targets"
   for host in "${target_list[@]}"; do
     host="${host//[[:space:]]/}"
     [[ -n "$host" ]] || continue
     result="$(timeout 8 openssl s_client -connect "${host}:443" -servername "$host" -alpn h2 </dev/null 2>&1 || true)"
+    read -r tcp_ms tls_ms <<< "$(probe_host "$host")"
     if grep -q 'CONNECTED' <<< "$result" && grep -q 'Verify return code: 0' <<< "$result"; then
       tls="$(grep -m1 '^New, TLSv' <<< "$result" | sed -E 's/^New, (TLSv[^, ]+).*/\1/' || true)"
       [[ -n "$tls" ]] || tls="$(grep -m1 '^Protocol *:' <<< "$result" | awk '{print $3}' || true)"
       alpn="$(grep -m1 'ALPN protocol:' <<< "$result" | sed 's/.*: //' || true)"
       cert="$(awk '/BEGIN CERTIFICATE/{p=1} p{print} /END CERTIFICATE/{exit}' <<< "$result" | openssl x509 -noout -subject 2>/dev/null | sed -E 's/^subject=.*CN = //; s/^subject=//')"
-      ms="$(curl -4sk --connect-timeout 4 --max-time 8 -o /dev/null -w '%{time_connect}' "https://${host}/" 2>/dev/null || echo 99)"
-      ms="$(awk -v t="$ms" 'BEGIN { printf "%d ms", t*1000 }')"
-      printf '%-30s %-8s %-8s %-8s %-35s %s\n' "${host}:443" "可用" "${tls:--}" "${alpn:--}" "${cert:--}" "$ms"
+      printf '%-30s %-8s %-8s %-8s %-35s %-10s %-10s\n' "${host}:443" "可用" "${tls:--}" "${alpn:--}" "${cert:--}" "${tcp_ms} ms" "${tls_ms} ms"
     else
-      printf '%-30s %-8s %-8s %-8s %-35s %s\n' "${host}:443" "不可用" "-" "-" "-" "-"
+      printf '%-30s %-8s %-8s %-8s %-35s %-10s %-10s\n' "${host}:443" "不可用" "-" "-" "-" "${tcp_ms} ms" "${tls_ms} ms"
     fi
   done
 }
 
+
 choose_sni() {
   [[ "$SNI" == "auto" ]] || return 0
-  local best="" best_ms=999999 host ms
+  local best="" best_ms=999999 host tcp_ms tls_ms
   IFS=',' read -ra target_list <<< "$REALITY_TARGETS"
   for host in "${target_list[@]}"; do
     host="${host//[[:space:]]/}"
     [[ -n "$host" ]] || continue
-    ms="$(curl -4sk --connect-timeout 4 --max-time 5 -o /dev/null -w '%{time_connect}' "https://$host/" 2>/dev/null || true)"
-    [[ "$ms" =~ ^[0-9]+\.[0-9]+$ ]] || continue
-    ms="$(awk -v t="$ms" 'BEGIN { printf "%d", t*1000 }')"
-    if (( ms < best_ms )); then best="$host"; best_ms="$ms"; fi
+    read -r tcp_ms tls_ms <<< "$(probe_host "$host")"
+    [[ "$tls_ms" =~ ^[0-9]+$ ]] || continue
+    if (( tls_ms < best_ms )); then best="$host"; best_ms="$tls_ms"; fi
   done
   SNI="${best:-www.microsoft.com}"
-  info "伪装域名: $SNI（TCP/443 实测约 ${best_ms}ms；仅作路径延迟参考）"
+  info "伪装域名: $SNI（TLS 握手中位数约 ${best_ms}ms；三次采样）"
 }
 
 show_status() {

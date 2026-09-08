@@ -66,7 +66,7 @@ sudo env ACTION=uninstall bash vps-node.sh
 - TLS 版本
 - ALPN（优先协商 h2）
 - 证书 CN/Subject
-- TCP 建连延迟
+- TCP 建连延迟和 TLS 完整握手延迟（每个目标三次采样取中位数）
 
 默认候选列表不含 `www.cloudflare.com`。也可以自定义：
 
