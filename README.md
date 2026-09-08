@@ -5,7 +5,7 @@
 ## 协议与端口
 
 - VLESS-Reality：`443/tcp`，TCP 原始流（sing-box 中 `type: vless`，没有 WebSocket/gRPC）。严格说它不是“raw 协议”，而是 VLESS over TCP + Reality。
-- AnyTLS：`8443/tcp`
+- AnyTLS：`8443/tcp`，使用 Reality，不需要自签证书和 `insecure=1`
 - Hysteria2：随机高位 `udp` 端口（默认范围 `20000-65535`，每次重建时重新选择空闲端口）
 
 ## 一键安装
@@ -135,7 +135,7 @@ systemctl restart sing-box
 
 ## 注意
 
-- AnyTLS 和 Hysteria2 当前使用自签证书，客户端需要启用 `insecure=1`；生产环境更推荐给 VPS 绑定域名并换成受信任证书。
+- AnyTLS 使用 Reality，与 VLESS 共用生成的 Reality 公钥、Short ID 和 SNI；Hysteria2 仍使用自签证书，客户端需要 `insecure=1`。
 - Reality 的私钥只保存在 VPS；客户端使用输出的公钥，不能把私钥分享出去。
 - 公网发布前请固定 sing-box 版本并自行核对 Release 校验和；默认通过 GitHub API 获取最新版。
 - VPS 服务商、所在地区及当地法律法规可能限制代理服务，请自行确认合规性。

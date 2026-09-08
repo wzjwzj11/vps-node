@@ -18,7 +18,7 @@ HY2_PORT="${HY2_PORT:-auto}"
 SNI="${SNI:-auto}"                 # auto=从候选伪装站中选择 TCP/443 延迟最低者
 TAG="${TAG:-vps}"
 SB_VER="${SB_VER:-}"              # 留空=自动取最新版
-SCRIPT_VERSION="v1.0.13"
+SCRIPT_VERSION="v1.0.14"
 SCRIPT_URL="https://raw.githubusercontent.com/wzjwzj11/vps-node/${SCRIPT_VERSION}/vps-node.sh"
 SCRIPT_LATEST_URL="https://raw.githubusercontent.com/wzjwzj11/vps-node/main/vps-node.sh"
 ACTION="${ACTION:-menu}"       # menu / install / sb-update / script-update / update / bbr / status / scan / node-info / uninstall
@@ -411,8 +411,13 @@ cat > "$CONF_DIR/config.json" <<EOF
       "users": [ { "name": "default", "password": "${ANYTLS_PASS}" } ],
       "tls": {
         "enabled": true,
-        "certificate_path": "${CERT}",
-        "key_path": "${KEY}"
+        "server_name": "${SNI}",
+        "reality": {
+          "enabled": true,
+          "handshake": { "server": "${SNI}", "server_port": 443 },
+          "private_key": "${PRIV_KEY}",
+          "short_id": ["${SHORT_ID}"]
+        }
       }
     },
     {
@@ -488,7 +493,7 @@ fi
 PUB_IP="$(curl -fsSL -4 --max-time 8 https://api.ipify.org 2>/dev/null || curl -fsSL -4 --max-time 8 https://ifconfig.me 2>/dev/null || echo '<你的VPS_IP>')"
 
 VLESS_LINK="vless://${UUID}@${PUB_IP}:${VLESS_PORT}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${SNI}&fp=chrome&pbk=${PUB_KEY}&sid=${SHORT_ID}&type=tcp#${TAG}-reality"
-ANYTLS_LINK="anytls://${ANYTLS_PASS}@${PUB_IP}:${ANYTLS_PORT}?security=tls&sni=${SNI}&insecure=1#${TAG}-anytls"
+ANYTLS_LINK="anytls://${ANYTLS_PASS}@${PUB_IP}:${ANYTLS_PORT}?security=reality&sni=${SNI}&fp=chrome&pbk=${PUB_KEY}&sid=${SHORT_ID}#${TAG}-anytls"
 HY2_LINK="hysteria2://${HY2_PASS}@${PUB_IP}:${HY2_PORT}/?sni=${SNI}&insecure=1&alpn=h3#${TAG}-hy2"
 
 INFO_FILE="/root/node_info_$(date +%Y%m%d).txt"
@@ -502,7 +507,7 @@ INFO_FILE="/root/node_info_$(date +%Y%m%d).txt"
   echo "sni/伪装:      $SNI"
   echo "public_key:    $PUB_KEY"
   echo "short_id:      $SHORT_ID"
-  echo "--- AnyTLS ---"
+  echo "--- AnyTLS (Reality) ---"
   echo "端口:          $ANYTLS_PORT/tcp"
   echo "密码:          $ANYTLS_PASS"
   echo "--- Hysteria2 ---"
