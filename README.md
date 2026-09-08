@@ -8,14 +8,30 @@
 - AnyTLS：`8443/tcp`
 - Hysteria2：随机高位 `udp` 端口（默认范围 `20000-65535`，每次重建时重新选择空闲端口）
 
+## 一键安装
+
+公开仓库可以直接使用固定版本一键安装：
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/wzjwzj11/vps-node/v1.0.12/vps-node.sh)
+```
+
+也可以使用 `main` 获取最新脚本：
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/wzjwzj11/vps-node/main/vps-node.sh)
+```
+
+推荐首次安装使用固定版本；确认新版本稳定后，再在 VPS 菜单中选择“更新本机脚本”。粘贴命令时只复制纯 URL，不要包含网页或聊天界面附加的 `@url:`、反引号等标记。
+
 ## 使用
 
 ```bash
 # 先下载审计，不要盲目执行远程脚本
-curl -fLo vps-node.sh https://你的域名/vps-node.sh
+curl -fLo vps-node.sh https://raw.githubusercontent.com/wzjwzj11/vps-node/v1.0.12/vps-node.sh
 less vps-node.sh
 
-# 安装；UUID 自动随机生成，SNI=auto 自动选择 TCP/443 建连延迟最低的候选域名
+# 安装；UUID 自动随机生成，SNI=auto 自动选择 TCP/443 延迟最低的候选域名
 sudo bash vps-node.sh
 
 # 显式指定参数
