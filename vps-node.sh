@@ -18,10 +18,10 @@ HY2_PORT="${HY2_PORT:-auto}"
 SNI="${SNI:-auto}"                 # auto=从候选伪装站中选择 TCP/443 延迟最低者
 TAG="${TAG:-vps}"
 SB_VER="${SB_VER:-}"              # 留空=自动取最新版
-SCRIPT_VERSION="v1.0.11"
+SCRIPT_VERSION="v1.0.12"
 SCRIPT_URL="https://raw.githubusercontent.com/wzjwzj11/vps-node/${SCRIPT_VERSION}/vps-node.sh"
 SCRIPT_LATEST_URL="https://raw.githubusercontent.com/wzjwzj11/vps-node/main/vps-node.sh"
-ACTION="${ACTION:-menu}"       # menu / install / sb-update / script-update / update / bbr / status / scan / uninstall
+ACTION="${ACTION:-menu}"       # menu / install / sb-update / script-update / update / bbr / status / scan / node-info / uninstall
 REALITY_TARGETS="${REALITY_TARGETS:-www.intel.com,aws.amazon.com,www.amazon.com,www.samsung.com,www.amd.com,www.microsoft.com,www.sony.com,www.nvidia.com,www.apple.com,www.google.com,www.bing.com,www.yahoo.com}"
 # ====================================
 
@@ -121,6 +121,23 @@ choose_sni() {
   info "伪装域名: $SNI（TLS 握手中位数约 ${best_ms}ms；三次采样）"
 }
 
+show_node_info() {
+  local info_file latest=""
+  latest="$(find /root -maxdepth 1 -type f -name 'node_info_*.txt' -printf '%T@ %p\n' 2>/dev/null | sort -nr | awk 'NR==1{$1=""; sub(/^ /,""); print}')"
+  echo "========== 节点信息 =========="
+  if [[ -n "$latest" && -r "$latest" ]]; then
+    echo "信息文件: $latest"
+    cat "$latest"
+  else
+    echo "未找到 /root/node_info_*.txt"
+    [[ -r /etc/sing-box/config.json ]] && echo "配置文件存在: /etc/sing-box/config.json" || true
+  fi
+  echo "---------- 当前服务 ----------"
+  systemctl --no-pager --full status sing-box 2>/dev/null | sed -n '1,12p' || true
+  echo "---------- 当前监听 ----------"
+  ss -ltnup 2>/dev/null | grep -E ':(443|8443|[2-9][0-9]{4}|[1-9][0-9]{4})[[:space:]]' || echo "未读取到监听端口"
+}
+
 show_status() {
   echo "========== VPS 节点状态 =========="
   . /etc/os-release 2>/dev/null || true
@@ -203,8 +220,9 @@ if [[ "$ACTION" == "menu" ]]; then
     echo "4. 开启 BBR"
     echo "5. 查看系统、服务和端口状态"
     echo "6. Reality 目标扫描"
-    echo "7. 更新本机脚本"
-    echo "8. 卸载 sing-box"
+    echo "7. 查询节点信息"
+    echo "8. 更新本机脚本"
+    echo "9. 卸载 sing-box"
     echo "0. 退出"
     read -r -p "请选择: " choice
     case "$choice" in
@@ -214,8 +232,9 @@ if [[ "$ACTION" == "menu" ]]; then
       4) ACTION=bbr; break ;;
       5) show_status; continue ;;
       6) ACTION=scan; break ;;
-      7) ACTION=script-update; break ;;
-      8) ACTION=uninstall; break ;;
+      7) ACTION=node-info; break ;;
+      8) ACTION=script-update; break ;;
+      9) ACTION=uninstall; break ;;
       0) exit 0 ;;
       *) echo "无效选择" ;;
     esac
@@ -236,6 +255,8 @@ case "$ACTION" in
     show_status; exit 0 ;;
   scan)
     scan_reality_targets; exit 0 ;;
+  node-info)
+    show_node_info; exit 0 ;;
   script-update)
     update_script; exit 0 ;;
   sb-update)
@@ -253,8 +274,8 @@ case "$ACTION" in
     rm -rf /etc/sing-box
     systemctl daemon-reload
     echo "sing-box 已卸载（不会删除系统包和防火墙规则）"; exit 0 ;;
-  install|sb-update|script-update) ;;
-  *) die "ACTION 只能是 menu/install/sb-update/script-update/update/bbr/status/scan/uninstall" ;;
+  install|sb-update|script-update|node-info) ;;
+  *) die "ACTION 只能是 menu/install/sb-update/script-update/update/bbr/status/scan/node-info/uninstall" ;;
 esac
 
 
