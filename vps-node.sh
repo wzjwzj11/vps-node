@@ -55,10 +55,24 @@ show_status() {
 }
 
 create_shortcut() {
-  local target=/usr/local/bin/vps-node
-  [[ -f "$target" && "$(readlink -f "$target" 2>/dev/null || true)" == "$(readlink -f "$0" 2>/dev/null || true)" ]] || return 0
-  chmod 700 "$target" 2>/dev/null || true
+  local target=/usr/local/bin/sb
+  local raw_url="https://raw.githubusercontent.com/wzjwzj11/vps-node/v1.0.1/vps-node.sh"
+  cat > "$target" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+RAW_URL="$raw_url"
+TMP_SCRIPT="\$(mktemp /tmp/vps-node.XXXXXX.sh)"
+trap 'rm -f "\$TMP_SCRIPT"' EXIT
+curl -fsSL --retry 3 --connect-timeout 10 "\$RAW_URL" -o "\$TMP_SCRIPT"
+chmod 700 "\$TMP_SCRIPT"
+exec bash "\$TMP_SCRIPT" "\$@"
+EOF
+  chmod 755 "$target"
+  hash -r 2>/dev/null || true
+  ok "快捷命令已设置: 输入 sb 可重新打开 VPS 节点管理脚本"
 }
+
+create_shortcut
 
 if [[ "$ACTION" == "menu" ]]; then
   while true; do

@@ -25,9 +25,22 @@ sudo env UUID='你的UUID' VLESS_PORT=443 ANYTLS_PORT=8443 HY2_PORT=8444 \
 
 执行后节点信息保存到 `/root/node_info_YYYYMMDD.txt`。脚本只从 GitHub 官方 Release 下载 sing-box，不使用第三方下载器或远程执行代码。
 
-## 管理菜单
+## 快捷命令
 
-直接运行脚本会进入菜单，提供安装/重建、系统更新、sing-box 更新、BBR、状态查看和卸载。
+首次执行脚本后会自动创建：
+
+```text
+/usr/local/bin/sb
+```
+
+以后在 VPS 上直接输入：
+
+```bash
+sb
+```
+
+即可重新打开管理菜单。`sb` 启动时会从固定版本 `v1.0.0` 的公开 Raw 地址下载脚本，避免 `main` 分支被意外修改影响现有 VPS。升级到新版本后，重新执行新版本安装命令即可更新快捷命令。
+
 
 也可以无菜单执行：
 
