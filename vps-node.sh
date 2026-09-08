@@ -66,7 +66,7 @@ scan_reality_targets() {
   for host in "${target_list[@]}"; do
     host="${host//[[:space:]]/}"
     [[ -n "$host" ]] || continue
-    result="$(timeout 8 openssl s_client -connect "${host}:443" -servername "$host" -alpn h2 </dev/null 2>/dev/null || true)"
+    result="$(timeout 8 openssl s_client -connect "${host}:443" -servername "$host" -alpn h2 </dev/null 2>&1 || true)"
     if grep -q 'CONNECTED' <<< "$result" && grep -q 'Verify return code: 0' <<< "$result"; then
       tls="$(grep -m1 '^New, TLSv' <<< "$result" | sed -E 's/^New, (TLSv[^, ]+).*/\1/' || true)"
       [[ -n "$tls" ]] || tls="$(grep -m1 '^Protocol *:' <<< "$result" | awk '{print $3}' || true)"
