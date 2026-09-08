@@ -18,7 +18,7 @@ HY2_PORT="${HY2_PORT:-auto}"
 SNI="${SNI:-auto}"                 # auto=从候选伪装站中选择 TCP/443 延迟最低者
 TAG="${TAG:-vps}"
 SB_VER="${SB_VER:-}"              # 留空=自动取最新版
-SCRIPT_VERSION="v1.0.12"
+SCRIPT_VERSION="v1.0.13"
 SCRIPT_URL="https://raw.githubusercontent.com/wzjwzj11/vps-node/${SCRIPT_VERSION}/vps-node.sh"
 SCRIPT_LATEST_URL="https://raw.githubusercontent.com/wzjwzj11/vps-node/main/vps-node.sh"
 ACTION="${ACTION:-menu}"       # menu / install / sb-update / script-update / update / bbr / status / scan / node-info / uninstall
@@ -214,25 +214,25 @@ if [[ "$ACTION" == "menu" ]]; then
   while true; do
     echo
     echo "========== VPS 节点管理 =========="
-    echo "1. 安装/重建节点配置"
+    echo "1. 查看 VPS 基础状态"
     echo "2. 更新系统软件包"
-    echo "3. 更新 sing-box"
-    echo "4. 开启 BBR"
-    echo "5. 查看系统、服务和端口状态"
-    echo "6. Reality 目标扫描"
-    echo "7. 查询节点信息"
+    echo "3. 开启 BBR"
+    echo "4. Reality 目标扫描"
+    echo "5. 安装/重建节点配置"
+    echo "6. 查询节点信息"
+    echo "7. 更新 sing-box"
     echo "8. 更新本机脚本"
     echo "9. 卸载 sing-box"
     echo "0. 退出"
     read -r -p "请选择: " choice
     case "$choice" in
-      1) ACTION=install; break ;;
+      1) ACTION=status; break ;;
       2) ACTION=update; break ;;
-      3) ACTION=sb-update; SB_VER=""; break ;;
-      4) ACTION=bbr; break ;;
-      5) show_status; continue ;;
-      6) ACTION=scan; break ;;
-      7) ACTION=node-info; break ;;
+      3) ACTION=bbr; break ;;
+      4) ACTION=scan; break ;;
+      5) ACTION=install; break ;;
+      6) ACTION=node-info; break ;;
+      7) ACTION=sb-update; SB_VER=""; break ;;
       8) ACTION=script-update; break ;;
       9) ACTION=uninstall; break ;;
       0) exit 0 ;;

@@ -41,7 +41,30 @@ sudo env UUID='你的UUID' VLESS_PORT=443 ANYTLS_PORT=8443 HY2_PORT=auto \
 
 执行后节点信息保存到 `/root/node_info_YYYYMMDD.txt`。脚本只从 GitHub 官方 Release 下载 sing-box，不使用第三方下载器或远程执行代码。
 
-## 快捷命令
+## 新 VPS 推荐操作顺序
+
+拿到新 VPS 后，按以下顺序操作：
+
+```text
+1. 查看 VPS 基础状态
+2. 更新系统软件包
+3. 开启 BBR
+4. Reality 目标扫描
+5. 安装/重建节点配置
+6. 查询节点信息
+```
+
+说明：
+
+1. 先确认系统、架构、内存、公网 IP、内核和端口情况。
+2. 更新系统软件包，减少旧依赖和安全更新遗漏。
+3. 开启 BBR；如果当前内核不支持，脚本会提示而不会强行更换内核。
+4. 扫描 Reality 候选目标，观察 TLS、ALPN、证书和重复测量延迟。
+5. 安装节点，`SNI=auto` 会重新测量并选择 TLS 握手中位延迟较低的候选目标，HY2 自动选择空闲高位 UDP 端口。
+6. 查询节点信息，复制 VLESS、AnyTLS、Hysteria2 链接，并确认服务和监听端口。
+
+后续维护功能位于菜单第 7-9 项：更新 sing-box、更新本机脚本、卸载 sing-box。
+
 
 首次执行脚本后会自动创建：
 
