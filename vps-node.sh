@@ -151,7 +151,12 @@ set -euo pipefail
 exec bash /usr/local/bin/vps-node.sh "$@"
 EOF
   if [[ -f "$0" ]]; then
-    install -m 755 "$0" /usr/local/bin/vps-node.sh
+    local source_path target_path
+    source_path="$(readlink -f "$0" 2>/dev/null || realpath "$0" 2>/dev/null || printf '%s' "$0")"
+    target_path="$(readlink -f /usr/local/bin/vps-node.sh 2>/dev/null || realpath /usr/local/bin/vps-node.sh 2>/dev/null || printf '%s' /usr/local/bin/vps-node.sh)"
+    if [[ "$source_path" != "$target_path" ]]; then
+      install -m 755 "$0" /usr/local/bin/vps-node.sh
+    fi
   else
     local tmp="$(mktemp /tmp/vps-node-local.XXXXXX.sh)"
     curl -fsSL --retry 3 --connect-timeout 10 "$SCRIPT_URL" -o "$tmp" || die "无法保存本机脚本"
