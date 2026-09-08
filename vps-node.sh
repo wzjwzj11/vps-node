@@ -18,7 +18,8 @@ HY2_PORT="${HY2_PORT:-auto}"
 SNI="${SNI:-auto}"                 # auto=从候选伪装站中选择 TCP/443 延迟最低者
 TAG="${TAG:-vps}"
 SB_VER="${SB_VER:-}"              # 留空=自动取最新版
-ACTION="${ACTION:-menu}"       # menu / install / update / bbr / status / uninstall
+ACTION="${ACTION:-menu}"       # menu / install / sb-update / update / bbr / status / scan / uninstall
+REALITY_TARGETS="${REALITY_TARGETS:-www.intel.com,aws.amazon.com,www.amazon.com,www.samsung.com,www.amd.com,www.microsoft.com,www.sony.com,www.nvidia.com,www.apple.com,www.google.com,www.bing.com,www.yahoo.com}"
 # ====================================
 
 RED=$'\033[31m'; GRN=$'\033[32m'; YLW=$'\033[33m'; CYN=$'\033[36m'; NC=$'\033[0m'
@@ -55,11 +56,38 @@ random_high_port() {
   die "无法找到空闲的随机高位 UDP 端口"
 }
 
+scan_reality_targets() {
+  command -v openssl >/dev/null 2>&1 || die "扫描器需要 openssl"
+  command -v curl >/dev/null 2>&1 || die "扫描器需要 curl"
+  local targets="$REALITY_TARGETS" host result ms tls alpn cert
+  printf '%-30s %-8s %-8s %-8s %-35s %s\n' "目标" "状态" "TLS" "ALPN" "证书" "延迟"
+  printf '%-30s %-8s %-8s %-8s %-35s %s\n' "------------------------------" "--------" "--------" "--------" "-----------------------------------" "------"
+  IFS=',' read -ra target_list <<< "$targets"
+  for host in "${target_list[@]}"; do
+    host="${host//[[:space:]]/}"
+    [[ -n "$host" ]] || continue
+    result="$(timeout 8 openssl s_client -connect "${host}:443" -servername "$host" -alpn h2 </dev/null 2>/dev/null || true)"
+    if grep -q 'CONNECTED' <<< "$result" && grep -q 'Verify return code: 0' <<< "$result"; then
+      tls="$(grep -m1 '^New, TLSv' <<< "$result" | sed -E 's/^New, (TLSv[^, ]+).*/\1/' || true)"
+      [[ -n "$tls" ]] || tls="$(grep -m1 '^Protocol *:' <<< "$result" | awk '{print $3}' || true)"
+      alpn="$(grep -m1 'ALPN protocol:' <<< "$result" | sed 's/.*: //' || true)"
+      cert="$(awk '/BEGIN CERTIFICATE/{p=1} p{print} /END CERTIFICATE/{exit}' <<< "$result" | openssl x509 -noout -subject 2>/dev/null | sed -E 's/^subject=.*CN = //; s/^subject=//')"
+      ms="$(curl -4sk --connect-timeout 4 --max-time 8 -o /dev/null -w '%{time_connect}' "https://${host}/" 2>/dev/null || echo 99)"
+      ms="$(awk -v t="$ms" 'BEGIN { printf "%d ms", t*1000 }')"
+      printf '%-30s %-8s %-8s %-8s %-35s %s\n' "${host}:443" "可用" "${tls:--}" "${alpn:--}" "${cert:--}" "$ms"
+    else
+      printf '%-30s %-8s %-8s %-8s %-35s %s\n' "${host}:443" "不可用" "-" "-" "-" "-"
+    fi
+  done
+}
+
 choose_sni() {
   [[ "$SNI" == "auto" ]] || return 0
   local best="" best_ms=999999 host ms
-  # 不使用 www.cloudflare.com；以 VPS 到候选站 TCP/443 建连耗时作为路径近似
-  for host in www.microsoft.com www.apple.com www.google.com www.bing.com www.yahoo.com; do
+  IFS=',' read -ra target_list <<< "$REALITY_TARGETS"
+  for host in "${target_list[@]}"; do
+    host="${host//[[:space:]]/}"
+    [[ -n "$host" ]] || continue
     ms="$(curl -4sk --connect-timeout 4 --max-time 5 -o /dev/null -w '%{time_connect}' "https://$host/" 2>/dev/null || true)"
     [[ "$ms" =~ ^[0-9]+\.[0-9]+$ ]] || continue
     ms="$(awk -v t="$ms" 'BEGIN { printf "%d", t*1000 }')"
@@ -118,7 +146,8 @@ if [[ "$ACTION" == "menu" ]]; then
     echo "3. 更新 sing-box"
     echo "4. 开启 BBR"
     echo "5. 查看系统、服务和端口状态"
-    echo "6. 卸载 sing-box"
+    echo "6. Reality 目标扫描"
+    echo "7. 卸载 sing-box"
     echo "0. 退出"
     read -r -p "请选择: " choice
     case "$choice" in
@@ -127,7 +156,8 @@ if [[ "$ACTION" == "menu" ]]; then
       3) ACTION=sb-update; SB_VER=""; break ;;
       4) ACTION=bbr; break ;;
       5) show_status; continue ;;
-      6) ACTION=uninstall; break ;;
+      6) ACTION=scan; break ;;
+      7) ACTION=uninstall; break ;;
       0) exit 0 ;;
       *) echo "无效选择" ;;
     esac
@@ -146,6 +176,8 @@ case "$ACTION" in
     echo "系统更新完成；sing-box 若需更新请执行 ACTION=sb-update bash $0"; exit 0 ;;
   status)
     show_status; exit 0 ;;
+  scan)
+    scan_reality_targets; exit 0 ;;
   sb-update)
     # 继续执行下方官方二进制更新流程
     ;;

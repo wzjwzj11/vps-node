@@ -50,12 +50,30 @@ sudo env ACTION=update bash vps-node.sh
 sudo env ACTION=sb-update bash vps-node.sh
 sudo env ACTION=bbr bash vps-node.sh
 sudo env ACTION=status bash vps-node.sh
+sudo env ACTION=scan bash vps-node.sh
 sudo env ACTION=uninstall bash vps-node.sh
 ```
 
 `ACTION=sb-update` 只替换官方 sing-box 二进制，保留现有节点 UUID、Reality 密钥、密码和端口；更新前会用新二进制校验现有配置，校验失败不会重启服务。
 
-## 伪装域名选择
+## Reality 目标扫描
+
+菜单中的 `6. Reality 目标扫描` 会检测候选域名的：
+
+- TCP/443 是否可连接
+- TLS 版本
+- ALPN（优先协商 h2）
+- 证书 CN/Subject
+- TCP 建连延迟
+
+默认候选列表不含 `www.cloudflare.com`。也可以自定义：
+
+```bash
+sudo env REALITY_TARGETS='www.intel.com,aws.amazon.com,www.apple.com,www.microsoft.com' ACTION=scan bash vps-node.sh
+```
+
+扫描器用于筛选 Reality 握手目标，不会修改现有配置。最终是否适合作为 Reality 目标，还应确认目标支持 TLS 1.3、HTTP/2，并由 VPS 到目标的实际网络路径决定。
+
 
 `SNI=auto` 会从脚本内的候选站点逐个测试 VPS 到其 `TCP/443` 的连接耗时，选择当前测得最低者。候选站点不包含 `www.cloudflare.com`，当前包括 Microsoft、Apple、Google、Bing、Yahoo。它是网络路径延迟选择，不是严格的地理距离，也不保证长期最优。需要固定时直接设置 `SNI=www.microsoft.com` 等候选域名。
 
