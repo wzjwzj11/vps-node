@@ -55,8 +55,9 @@ sudo env ACTION=script-update bash vps-node.sh
 sudo env ACTION=uninstall bash vps-node.sh
 ```
 
-`ACTION=sb-update` 只替换官方 sing-box 二进制，保留现有节点 UUID、Reality 密钥、密码和端口；更新前会用新二进制校验现有配置，校验失败不会重启服务。
+`ACTION=script-update` 从公开仓库的 `main` 下载最新脚本，先检查文件非空、Shell 语法和版本标记，全部通过后才替换 `/usr/local/bin/vps-node.sh`；失败时保留旧版本。
 
+`ACTION=sb-update` 只替换官方 sing-box 二进制，保留现有节点 UUID、Reality 密钥、密码和端口；更新前会用新二进制校验现有配置，校验失败不会重启服务。
 ## Reality 目标扫描
 
 菜单中的 `6. Reality 目标扫描` 会检测候选域名的：

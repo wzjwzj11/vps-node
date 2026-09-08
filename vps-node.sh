@@ -18,8 +18,9 @@ HY2_PORT="${HY2_PORT:-auto}"
 SNI="${SNI:-auto}"                 # auto=从候选伪装站中选择 TCP/443 延迟最低者
 TAG="${TAG:-vps}"
 SB_VER="${SB_VER:-}"              # 留空=自动取最新版
-SCRIPT_VERSION="v1.0.5"
+SCRIPT_VERSION="v1.0.7"
 SCRIPT_URL="https://raw.githubusercontent.com/wzjwzj11/vps-node/${SCRIPT_VERSION}/vps-node.sh"
+SCRIPT_LATEST_URL="https://raw.githubusercontent.com/wzjwzj11/vps-node/main/vps-node.sh"
 ACTION="${ACTION:-menu}"       # menu / install / sb-update / script-update / update / bbr / status / scan / uninstall
 REALITY_TARGETS="${REALITY_TARGETS:-www.intel.com,aws.amazon.com,www.amazon.com,www.samsung.com,www.amd.com,www.microsoft.com,www.sony.com,www.nvidia.com,www.apple.com,www.google.com,www.bing.com,www.yahoo.com}"
 # ====================================
@@ -122,8 +123,8 @@ show_status() {
 update_script() {
   local tmp current="${SCRIPT_VERSION:-unknown}" new_version
   tmp="$(mktemp /tmp/vps-node-update.XXXXXX.sh)"
-  info "检查脚本更新: $SCRIPT_URL"
-  if ! curl -fsSL --retry 3 --connect-timeout 10 "$SCRIPT_URL" -o "$tmp"; then
+  info "检查脚本更新: $SCRIPT_LATEST_URL"
+  if ! curl -fsSL --retry 3 --connect-timeout 10 "$SCRIPT_LATEST_URL" -o "$tmp"; then
     rm -f "$tmp"; die "下载新版脚本失败，旧版本保持不变"
   fi
   [[ -s "$tmp" ]] || { rm -f "$tmp"; die "新版脚本为空，旧版本保持不变"; }
