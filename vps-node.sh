@@ -18,7 +18,9 @@ HY2_PORT="${HY2_PORT:-auto}"
 SNI="${SNI:-auto}"                 # auto=从候选伪装站中选择 TCP/443 延迟最低者
 TAG="${TAG:-vps}"
 SB_VER="${SB_VER:-}"              # 留空=自动取最新版
-ACTION="${ACTION:-menu}"       # menu / install / sb-update / update / bbr / status / scan / uninstall
+SCRIPT_VERSION="v1.0.5"
+SCRIPT_URL="https://raw.githubusercontent.com/wzjwzj11/vps-node/${SCRIPT_VERSION}/vps-node.sh"
+ACTION="${ACTION:-menu}"       # menu / install / sb-update / script-update / update / bbr / status / scan / uninstall
 REALITY_TARGETS="${REALITY_TARGETS:-www.intel.com,aws.amazon.com,www.amazon.com,www.samsung.com,www.amd.com,www.microsoft.com,www.sony.com,www.nvidia.com,www.apple.com,www.google.com,www.bing.com,www.yahoo.com}"
 # ====================================
 
@@ -117,23 +119,50 @@ show_status() {
   done
 }
 
-create_shortcut() {
-  local target=/usr/local/bin/sb
-  local raw_url="https://raw.githubusercontent.com/wzjwzj11/vps-node/v1.0.2/vps-node.sh"
-  cat > "$target" <<EOF
+update_script() {
+  local tmp current="${SCRIPT_VERSION:-unknown}" new_version
+  tmp="$(mktemp /tmp/vps-node-update.XXXXXX.sh)"
+  info "检查脚本更新: $SCRIPT_URL"
+  if ! curl -fsSL --retry 3 --connect-timeout 10 "$SCRIPT_URL" -o "$tmp"; then
+    rm -f "$tmp"; die "下载新版脚本失败，旧版本保持不变"
+  fi
+  [[ -s "$tmp" ]] || { rm -f "$tmp"; die "新版脚本为空，旧版本保持不变"; }
+  bash -n "$tmp" || { rm -f "$tmp"; die "新版脚本语法检查失败，旧版本保持不变"; }
+  grep -q '^SCRIPT_VERSION="v[0-9]' "$tmp" || { rm -f "$tmp"; die "新版脚本版本标记缺失，旧版本保持不变"; }
+  new_version="$(sed -n 's/^SCRIPT_VERSION="\([^"]*\)"/\1/p' "$tmp" | head -1)"
+  install -m 755 "$tmp" /usr/local/bin/vps-node.sh
+  rm -f "$tmp"
+  cat > /usr/local/bin/sb <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
-RAW_URL="$raw_url"
-TMP_SCRIPT="\$(mktemp /tmp/vps-node.XXXXXX.sh)"
-trap 'rm -f "\$TMP_SCRIPT"' EXIT
-curl -fsSL --retry 3 --connect-timeout 10 "\$RAW_URL" -o "\$TMP_SCRIPT"
-chmod 700 "\$TMP_SCRIPT"
-exec bash "\$TMP_SCRIPT" "\$@"
+exec bash /usr/local/bin/vps-node.sh "$@"
 EOF
-  chmod 755 "$target"
+  chmod 755 /usr/local/bin/sb
+  ok "脚本已更新: $current -> $new_version"
+  ok "以后输入 sb 将运行本地新版脚本"
+}
+
+create_shortcut() {
+  local target=/usr/local/bin/sb
+  cat > "$target" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+exec bash /usr/local/bin/vps-node.sh "$@"
+EOF
+  if [[ -f "$0" ]]; then
+    install -m 755 "$0" /usr/local/bin/vps-node.sh
+  else
+    local tmp="$(mktemp /tmp/vps-node-local.XXXXXX.sh)"
+    curl -fsSL --retry 3 --connect-timeout 10 "$SCRIPT_URL" -o "$tmp" || die "无法保存本机脚本"
+    bash -n "$tmp" || die "本机脚本语法检查失败"
+    install -m 755 "$tmp" /usr/local/bin/vps-node.sh
+    rm -f "$tmp"
+  fi
   hash -r 2>/dev/null || true
   ok "快捷命令已设置: 输入 sb 可重新打开 VPS 节点管理脚本"
 }
+
+
 
 create_shortcut
 
@@ -147,7 +176,8 @@ if [[ "$ACTION" == "menu" ]]; then
     echo "4. 开启 BBR"
     echo "5. 查看系统、服务和端口状态"
     echo "6. Reality 目标扫描"
-    echo "7. 卸载 sing-box"
+    echo "7. 更新本机脚本"
+    echo "8. 卸载 sing-box"
     echo "0. 退出"
     read -r -p "请选择: " choice
     case "$choice" in
@@ -157,7 +187,8 @@ if [[ "$ACTION" == "menu" ]]; then
       4) ACTION=bbr; break ;;
       5) show_status; continue ;;
       6) ACTION=scan; break ;;
-      7) ACTION=uninstall; break ;;
+      7) ACTION=script-update; break ;;
+      8) ACTION=uninstall; break ;;
       0) exit 0 ;;
       *) echo "无效选择" ;;
     esac
@@ -178,6 +209,8 @@ case "$ACTION" in
     show_status; exit 0 ;;
   scan)
     scan_reality_targets; exit 0 ;;
+  script-update)
+    update_script; exit 0 ;;
   sb-update)
     # 继续执行下方官方二进制更新流程
     ;;
@@ -193,8 +226,8 @@ case "$ACTION" in
     rm -rf /etc/sing-box
     systemctl daemon-reload
     echo "sing-box 已卸载（不会删除系统包和防火墙规则）"; exit 0 ;;
-  install|sb-update) ;;
-  *) die "ACTION 只能是 menu/install/sb-update/update/bbr/uninstall" ;;
+  install|sb-update|script-update) ;;
+  *) die "ACTION 只能是 menu/install/sb-update/script-update/update/bbr/status/scan/uninstall" ;;
 esac
 
 
