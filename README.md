@@ -51,6 +51,7 @@ sudo env ACTION=sb-update bash vps-node.sh
 sudo env ACTION=bbr bash vps-node.sh
 sudo env ACTION=status bash vps-node.sh
 sudo env ACTION=scan bash vps-node.sh
+sudo env ACTION=script-update bash vps-node.sh
 sudo env ACTION=uninstall bash vps-node.sh
 ```
 
