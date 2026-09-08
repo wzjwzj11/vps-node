@@ -18,7 +18,7 @@ HY2_PORT="${HY2_PORT:-auto}"
 SNI="${SNI:-auto}"                 # auto=从候选伪装站中选择 TCP/443 延迟最低者
 TAG="${TAG:-vps}"
 SB_VER="${SB_VER:-}"              # 留空=自动取最新版
-SCRIPT_VERSION="v1.0.10"
+SCRIPT_VERSION="v1.0.11"
 SCRIPT_URL="https://raw.githubusercontent.com/wzjwzj11/vps-node/${SCRIPT_VERSION}/vps-node.sh"
 SCRIPT_LATEST_URL="https://raw.githubusercontent.com/wzjwzj11/vps-node/main/vps-node.sh"
 ACTION="${ACTION:-menu}"       # menu / install / sb-update / script-update / update / bbr / status / scan / uninstall
@@ -499,3 +499,5 @@ echo
 ok "全部完成！节点信息已保存到 $INFO_FILE"
 warn "VLESS-Reality 用 v2rayN(sing-box/xray内核均可)；Hysteria2 必须切 sing-box 内核。"
 warn "升级: SB_VER= 留空重跑本脚本即升级到最新版; 卸载: systemctl disable --now sing-box && rm -rf /usr/local/bin/sing-box /etc/sing-box /etc/systemd/system/sing-box.service"
+echo "安装脚本已结束，返回 Shell。"
+exit 0
