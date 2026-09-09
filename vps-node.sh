@@ -18,7 +18,7 @@ HY2_PORT="${HY2_PORT:-auto}"
 SNI="${SNI:-auto}"                 # auto=从候选伪装站中选择 TCP/443 延迟最低者
 TAG="${TAG:-vps}"
 SB_VER="${SB_VER:-}"              # 留空=自动取最新版
-SCRIPT_VERSION="v1.0.17"
+SCRIPT_VERSION="v1.0.18"
 SCRIPT_URL="https://raw.githubusercontent.com/wzjwzj11/vps-node/${SCRIPT_VERSION}/vps-node.sh"
 SCRIPT_LATEST_URL="https://raw.githubusercontent.com/wzjwzj11/vps-node/main/vps-node.sh"
 ACTION="${ACTION:-menu}"       # menu / install / sb-update / script-update / update / bbr / status / scan / node-info / uninstall
@@ -238,6 +238,7 @@ create_shortcut() {
 set -euo pipefail
 exec bash /usr/local/bin/vps-node.sh "$@"
 EOF
+  chmod 755 "$target"
   if [[ -f "$0" ]]; then
     local source_path target_path
     source_path="$(readlink -f "$0" 2>/dev/null || realpath "$0" 2>/dev/null || printf '%s' "$0")"
