@@ -18,7 +18,7 @@ HY2_PORT="${HY2_PORT:-auto}"
 SNI="${SNI:-auto}"                 # auto=从候选伪装站中选择 TCP/443 延迟最低者
 TAG="${TAG:-vps}"
 SB_VER="${SB_VER:-}"              # 留空=自动取最新版
-SCRIPT_VERSION="v1.0.16"
+SCRIPT_VERSION="v1.0.17"
 SCRIPT_URL="https://raw.githubusercontent.com/wzjwzj11/vps-node/${SCRIPT_VERSION}/vps-node.sh"
 SCRIPT_LATEST_URL="https://raw.githubusercontent.com/wzjwzj11/vps-node/main/vps-node.sh"
 ACTION="${ACTION:-menu}"       # menu / install / sb-update / script-update / update / bbr / status / scan / node-info / uninstall
@@ -107,15 +107,17 @@ scan_reality_targets() {
 
 
 country_for_ip() {
-  local ip="$1"
+  local ip="$1" result=""
   [[ -n "$ip" ]] || return 0
-  curl -4fsSL --connect-timeout 3 --max-time 5 "https://ipapi.co/${ip}/country/" 2>/dev/null | tr -d '[:space:]' | head -c 2
+  result="$(curl -4fsSL --connect-timeout 3 --max-time 5 "https://ipapi.co/${ip}/country/" 2>/dev/null || true)"
+  printf '%s' "$result" | tr -d '[:space:]' | head -c 2 || true
 }
 
 country_for_host() {
-  local host="$1" ip
-  ip="$(getent ahostsv4 "$host" 2>/dev/null | awk 'NR==1{print $1}')"
-  country_for_ip "$ip"
+  local host="$1" ip=""
+  ip="$(getent ahostsv4 "$host" 2>/dev/null | awk 'NR==1{print $1}' || true)"
+  [[ -n "$ip" ]] || return 0
+  country_for_ip "$ip" || true
 }
 
 choose_sni() {
@@ -355,7 +357,7 @@ for c in curl tar openssl jq; do command -v "$c" >/dev/null || NEED+=("$c"); don
 [[ ${#NEED[@]} -gt 0 ]] && { info "安装依赖: ${NEED[*]}"; install_pkgs "${NEED[@]}"; }
 
 [[ "$HY2_PORT" == "auto" ]] && HY2_PORT="$(random_high_port)"
-choose_sni
+choose_sni || { SNI="${SNI:-www.microsoft.com}"; warn "伪装域名自动选择失败，回退到 $SNI"; }
 
 # ---------- 1. 安装 sing-box (官方 GitHub Release) ----------
 for pair in "${VLESS_PORT}:tcp" "${ANYTLS_PORT}:tcp" "${HY2_PORT}:udp"; do
