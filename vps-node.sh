@@ -18,11 +18,11 @@ HY2_PORT="${HY2_PORT:-auto}"
 SNI="${SNI:-auto}"                 # auto=从候选伪装站中选择 TCP/443 延迟最低者
 TAG="${TAG:-vps}"
 SB_VER="${SB_VER:-}"              # 留空=自动取最新版
-SCRIPT_VERSION="v1.0.15"
+SCRIPT_VERSION="v1.0.16"
 SCRIPT_URL="https://raw.githubusercontent.com/wzjwzj11/vps-node/${SCRIPT_VERSION}/vps-node.sh"
 SCRIPT_LATEST_URL="https://raw.githubusercontent.com/wzjwzj11/vps-node/main/vps-node.sh"
 ACTION="${ACTION:-menu}"       # menu / install / sb-update / script-update / update / bbr / status / scan / node-info / uninstall
-REALITY_TARGETS="${REALITY_TARGETS:-www.intel.com,aws.amazon.com,www.amazon.com,www.samsung.com,www.amd.com,www.microsoft.com,www.sony.com,www.nvidia.com,www.apple.com,www.google.com,www.bing.com,www.yahoo.com}"
+REALITY_TARGETS="${REALITY_TARGETS:-gateway.icloud.com,swdist.apple.com,addons.mozilla.org,www.microsoft.com,dl.google.com,images.unsplash.com,www.amazon.co.jp,yahoo.co.jp,www.intel.com,aws.amazon.com,www.amazon.com,www.samsung.com,www.amd.com,www.sony.com,www.nvidia.com,www.apple.com,www.google.com,www.bing.com,www.yahoo.com}"
 # ====================================
 
 RED=$'\033[31m'; GRN=$'\033[32m'; YLW=$'\033[33m'; CYN=$'\033[36m'; NC=$'\033[0m'
@@ -106,11 +106,36 @@ scan_reality_targets() {
 }
 
 
+country_for_ip() {
+  local ip="$1"
+  [[ -n "$ip" ]] || return 0
+  curl -4fsSL --connect-timeout 3 --max-time 5 "https://ipapi.co/${ip}/country/" 2>/dev/null | tr -d '[:space:]' | head -c 2
+}
+
+country_for_host() {
+  local host="$1" ip
+  ip="$(getent ahostsv4 "$host" 2>/dev/null | awk 'NR==1{print $1}')"
+  country_for_ip "$ip"
+}
+
 choose_sni() {
   [[ "$SNI" == "auto" ]] || return 0
-  local best="" best_ms=999999 host tcp_ms tls_ms
+  local best="" best_ms=999999 host tcp_ms tls_ms vps_ip vps_country host_country
+  local -a target_list=() eligible=()
   IFS=',' read -ra target_list <<< "$REALITY_TARGETS"
-  for host in "${target_list[@]}"; do
+  vps_ip="$(curl -4fsSL --connect-timeout 4 --max-time 6 https://api.ipify.org 2>/dev/null || true)"
+  vps_country="$(country_for_ip "$vps_ip")"
+  if [[ -n "$vps_country" ]]; then
+    for host in "${target_list[@]}"; do
+      host="${host//[[:space:]]/}"
+      [[ -n "$host" ]] || continue
+      host_country="$(country_for_host "$host")"
+      [[ "$host_country" == "$vps_country" ]] && eligible+=("$host")
+    done
+  fi
+  # 有同国家候选时只测这些；GeoIP/DNS 失败或无匹配时回退到完整候选池
+  ((${#eligible[@]} > 0)) || eligible=("${target_list[@]}")
+  for host in "${eligible[@]}"; do
     host="${host//[[:space:]]/}"
     [[ -n "$host" ]] || continue
     read -r tcp_ms tls_ms <<< "$(probe_host "$host")"
@@ -118,7 +143,11 @@ choose_sni() {
     if (( tls_ms < best_ms )); then best="$host"; best_ms="$tls_ms"; fi
   done
   SNI="${best:-www.microsoft.com}"
-  info "伪装域名: $SNI（TLS 握手中位数约 ${best_ms}ms；三次采样）"
+  if [[ -n "$vps_country" && ${#eligible[@]} -lt ${#target_list[@]} ]]; then
+    info "伪装域名: $SNI（与 VPS 同国家/地区代码 $vps_country，TLS 握手中位数约 ${best_ms}ms）"
+  else
+    info "伪装域名: $SNI（未找到同国家/地区候选，TLS 握手中位数约 ${best_ms}ms）"
+  fi
 }
 
 enable_bbr() {

@@ -116,7 +116,7 @@ sudo env REALITY_TARGETS='www.intel.com,aws.amazon.com,www.apple.com,www.microso
 扫描器用于筛选 Reality 握手目标，不会修改现有配置。最终是否适合作为 Reality 目标，还应确认目标支持 TLS 1.3、HTTP/2，并由 VPS 到目标的实际网络路径决定。
 
 
-`SNI=auto` 会从脚本内的候选站点逐个测试 VPS 到其 `TCP/443` 的连接耗时，选择当前测得最低者。候选站点不包含 `www.cloudflare.com`，当前包括 Microsoft、Apple、Google、Bing、Yahoo。它是网络路径延迟选择，不是严格的地理距离，也不保证长期最优。需要固定时直接设置 `SNI=www.microsoft.com` 等候选域名。
+`SNI=auto` 会先查询 VPS 公网 IP 的国家/地区代码，再查询候选域名解析到的 IP 的国家/地区代码；如果存在同国家/地区候选，只在这些候选中按三次 TLS 完整握手的中位延迟选择最低者。GeoIP 或 DNS 查询失败、或没有同国家/地区候选时，自动回退到全部候选。这里的国家/地区匹配基于公开 GeoIP 和 CDN 当前解析结果，仅作路径选择参考，不是严格地理距离保证。候选站点不包含 `www.cloudflare.com`。
 
 ## VPS 安全组
 
