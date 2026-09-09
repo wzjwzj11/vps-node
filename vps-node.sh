@@ -18,7 +18,7 @@ HY2_PORT="${HY2_PORT:-auto}"
 SNI="${SNI:-auto}"                 # auto=从候选伪装站中选择 TCP/443 延迟最低者
 TAG="${TAG:-vps}"
 SB_VER="${SB_VER:-}"              # 留空=自动取最新版
-SCRIPT_VERSION="v1.0.14"
+SCRIPT_VERSION="v1.0.15"
 SCRIPT_URL="https://raw.githubusercontent.com/wzjwzj11/vps-node/${SCRIPT_VERSION}/vps-node.sh"
 SCRIPT_LATEST_URL="https://raw.githubusercontent.com/wzjwzj11/vps-node/main/vps-node.sh"
 ACTION="${ACTION:-menu}"       # menu / install / sb-update / script-update / update / bbr / status / scan / node-info / uninstall
@@ -119,6 +119,25 @@ choose_sni() {
   done
   SNI="${best:-www.microsoft.com}"
   info "伪装域名: $SNI（TLS 握手中位数约 ${best_ms}ms；三次采样）"
+}
+
+enable_bbr() {
+  command -v sysctl >/dev/null || die "缺少 sysctl"
+  [[ -r /proc/sys/net/ipv4/tcp_available_congestion_control ]] || die "系统不支持读取 TCP 拥塞控制算法"
+  grep -qw bbr /proc/sys/net/ipv4/tcp_available_congestion_control || die "当前 Linux 内核不支持 BBR；请升级到支持 BBR 的内核后重试"
+  local tmp
+  tmp="$(mktemp)"
+  awk '!/^net\.core\.default_qdisc=/{print} !/^net\.ipv4\.tcp_congestion_control=/{print}' /etc/sysctl.conf 2>/dev/null > "$tmp"
+  printf '%s\n' 'net.core.default_qdisc=fq' 'net.ipv4.tcp_congestion_control=bbr' >> "$tmp"
+  install -m 644 "$tmp" /etc/sysctl.conf
+  rm -f "$tmp"
+  sysctl -w net.core.default_qdisc=fq >/dev/null
+  sysctl -w net.ipv4.tcp_congestion_control=bbr >/dev/null
+  if [[ "$(sysctl -n net.ipv4.tcp_congestion_control)" == "bbr" ]]; then
+    ok "BBR 已启用；qdisc=$(sysctl -n net.core.default_qdisc)"
+  else
+    die "BBR 配置写入成功，但当前运行内核未切换到 bbr"
+  fi
 }
 
 show_node_info() {
@@ -263,11 +282,7 @@ case "$ACTION" in
     # 继续执行下方官方二进制更新流程
     ;;
   bbr)
-    command -v sysctl >/dev/null || die "缺少 sysctl"
-    grep -q '^net.core.default_qdisc=fq$' /etc/sysctl.conf 2>/dev/null || echo 'net.core.default_qdisc=fq' >> /etc/sysctl.conf
-    grep -q '^net.ipv4.tcp_congestion_control=bbr$' /etc/sysctl.conf 2>/dev/null || echo 'net.ipv4.tcp_congestion_control=bbr' >> /etc/sysctl.conf
-    sysctl -p
-    echo "当前拥塞控制: $(sysctl -n net.ipv4.tcp_congestion_control)"; exit 0 ;;
+    enable_bbr; exit 0 ;;
   uninstall)
     systemctl disable --now sing-box 2>/dev/null || true
     rm -f /usr/local/bin/sing-box /etc/systemd/system/sing-box.service
