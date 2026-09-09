@@ -18,7 +18,7 @@ HY2_PORT="${HY2_PORT:-auto}"
 SNI="${SNI:-auto}"                 # auto=从候选伪装站中选择 TCP/443 延迟最低者
 TAG="${TAG:-vps}"
 SB_VER="${SB_VER:-}"              # 留空=自动取最新版
-SCRIPT_VERSION="v1.0.19"
+SCRIPT_VERSION="v1.0.20"
 SCRIPT_URL="https://raw.githubusercontent.com/wzjwzj11/vps-node/${SCRIPT_VERSION}/vps-node.sh"
 SCRIPT_LATEST_URL="https://raw.githubusercontent.com/wzjwzj11/vps-node/main/vps-node.sh"
 ACTION="${ACTION:-menu}"       # menu / install / sb-update / script-update / update / bbr / status / scan / node-info / uninstall
@@ -159,21 +159,18 @@ enable_bbr() {
     die "当前 Linux 内核不支持 BBR；请升级到支持 BBR 的内核后重试"
     return 1
   fi
-  local tmp
-  tmp="$(mktemp /tmp/vps-node-sysctl.XXXXXX)" || { die "无法创建临时文件"; return 1; }
-  if ! awk '!/^net\.core\.default_qdisc=/{print} !/^net\.ipv4\.tcp_congestion_control=/{print}' /etc/sysctl.conf 2>/dev/null > "$tmp"; then
-    rm -f "$tmp"; die "无法读取 /etc/sysctl.conf"; return 1
+  local conf=/etc/sysctl.d/99-vps-node-bbr.conf
+  install -d -m 755 /etc/sysctl.d || { die "无法创建 /etc/sysctl.d"; return 1; }
+  if ! cat > "$conf" <<'EOF'
+# Managed by vps-node
+net.core.default_qdisc=fq
+net.ipv4.tcp_congestion_control=bbr
+EOF
+  then
+    die "无法写入 $conf"; return 1
   fi
-  printf '%s\n' 'net.core.default_qdisc=fq' 'net.ipv4.tcp_congestion_control=bbr' >> "$tmp"
-  if ! install -m 644 "$tmp" /etc/sysctl.conf; then
-    rm -f "$tmp"; die "无法写入 /etc/sysctl.conf"; return 1
-  fi
-  rm -f "$tmp"
-  if ! sysctl -w net.core.default_qdisc=fq; then
-    die "无法设置 net.core.default_qdisc=fq"; return 1
-  fi
-  if ! sysctl -w net.ipv4.tcp_congestion_control=bbr; then
-    die "无法设置 net.ipv4.tcp_congestion_control=bbr"; return 1
+  if ! sysctl --load="$conf"; then
+    die "无法应用 $conf"; return 1
   fi
   local current_qdisc current_cc
   current_qdisc="$(sysctl -n net.core.default_qdisc 2>/dev/null || true)"
