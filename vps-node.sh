@@ -18,7 +18,7 @@ HY2_PORT="${HY2_PORT:-auto}"
 SNI="${SNI:-auto}"                 # auto=从候选伪装站中选择 TCP/443 延迟最低者
 TAG="${TAG:-vps}"
 SB_VER="${SB_VER:-}"              # 留空=自动取最新版
-SCRIPT_VERSION="v1.0.18"
+SCRIPT_VERSION="v1.0.19"
 SCRIPT_URL="https://raw.githubusercontent.com/wzjwzj11/vps-node/${SCRIPT_VERSION}/vps-node.sh"
 SCRIPT_LATEST_URL="https://raw.githubusercontent.com/wzjwzj11/vps-node/main/vps-node.sh"
 ACTION="${ACTION:-menu}"       # menu / install / sb-update / script-update / update / bbr / status / scan / node-info / uninstall
@@ -153,21 +153,36 @@ choose_sni() {
 }
 
 enable_bbr() {
-  command -v sysctl >/dev/null || die "缺少 sysctl"
-  [[ -r /proc/sys/net/ipv4/tcp_available_congestion_control ]] || die "系统不支持读取 TCP 拥塞控制算法"
-  grep -qw bbr /proc/sys/net/ipv4/tcp_available_congestion_control || die "当前 Linux 内核不支持 BBR；请升级到支持 BBR 的内核后重试"
+  command -v sysctl >/dev/null 2>&1 || { die "缺少 sysctl"; return 1; }
+  [[ -r /proc/sys/net/ipv4/tcp_available_congestion_control ]] || { die "系统不支持读取 TCP 拥塞控制算法"; return 1; }
+  if ! grep -qw bbr /proc/sys/net/ipv4/tcp_available_congestion_control; then
+    die "当前 Linux 内核不支持 BBR；请升级到支持 BBR 的内核后重试"
+    return 1
+  fi
   local tmp
-  tmp="$(mktemp)"
-  awk '!/^net\.core\.default_qdisc=/{print} !/^net\.ipv4\.tcp_congestion_control=/{print}' /etc/sysctl.conf 2>/dev/null > "$tmp"
+  tmp="$(mktemp /tmp/vps-node-sysctl.XXXXXX)" || { die "无法创建临时文件"; return 1; }
+  if ! awk '!/^net\.core\.default_qdisc=/{print} !/^net\.ipv4\.tcp_congestion_control=/{print}' /etc/sysctl.conf 2>/dev/null > "$tmp"; then
+    rm -f "$tmp"; die "无法读取 /etc/sysctl.conf"; return 1
+  fi
   printf '%s\n' 'net.core.default_qdisc=fq' 'net.ipv4.tcp_congestion_control=bbr' >> "$tmp"
-  install -m 644 "$tmp" /etc/sysctl.conf
+  if ! install -m 644 "$tmp" /etc/sysctl.conf; then
+    rm -f "$tmp"; die "无法写入 /etc/sysctl.conf"; return 1
+  fi
   rm -f "$tmp"
-  sysctl -w net.core.default_qdisc=fq >/dev/null
-  sysctl -w net.ipv4.tcp_congestion_control=bbr >/dev/null
-  if [[ "$(sysctl -n net.ipv4.tcp_congestion_control)" == "bbr" ]]; then
-    ok "BBR 已启用；qdisc=$(sysctl -n net.core.default_qdisc)"
+  if ! sysctl -w net.core.default_qdisc=fq; then
+    die "无法设置 net.core.default_qdisc=fq"; return 1
+  fi
+  if ! sysctl -w net.ipv4.tcp_congestion_control=bbr; then
+    die "无法设置 net.ipv4.tcp_congestion_control=bbr"; return 1
+  fi
+  local current_qdisc current_cc
+  current_qdisc="$(sysctl -n net.core.default_qdisc 2>/dev/null || true)"
+  current_cc="$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || true)"
+  if [[ "$current_cc" == "bbr" ]]; then
+    ok "BBR 已启用；qdisc=$current_qdisc"
   else
-    die "BBR 配置写入成功，但当前运行内核未切换到 bbr"
+    die "配置已写入，但当前拥塞控制算法是 '$current_cc'，不是 bbr"
+    return 1
   fi
 }
 
