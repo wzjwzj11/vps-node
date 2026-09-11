@@ -18,7 +18,7 @@ HY2_PORT="${HY2_PORT:-auto}"
 SNI="${SNI:-auto}"                 # auto=从候选伪装站中选择 TCP/443 延迟最低者
 TAG="${TAG:-vps}"
 SB_VER="${SB_VER:-}"              # 留空=自动取最新版
-SCRIPT_VERSION="v1.0.22"
+SCRIPT_VERSION="v1.0.23"
 SCRIPT_URL="https://raw.githubusercontent.com/wzjwzj11/vps-node/${SCRIPT_VERSION}/vps-node.sh"
 SCRIPT_LATEST_URL="https://raw.githubusercontent.com/wzjwzj11/vps-node/main/vps-node.sh"
 ACTION="${ACTION:-menu}"       # menu / install / sb-update / script-update / update / bbr / net-tune / net-reset / speed-test / status / scan / node-info / uninstall
@@ -272,16 +272,15 @@ speed_test() {
     name="${url#*://}"; name="${name%%/*}"
     # 写临时文件确保统计的是实际收到的字节数，不接受仅凭 HTTP 200 判断成功
     local tmp="$(mktemp /tmp/vps-node-speed.XXXXXX)"
-    local metrics
+    local metrics=""
     metrics="$(curl -4L --connect-timeout 8 --max-time 45 -sS "$url" -o "$tmp" -w '%{http_code} %{size_download} %{speed_download} %{time_total}' 2>&1)" || true
     rm -f "$tmp"
-    if [[ "$metrics" =~ ^([0-9]{3})[[:space:]]+([0-9]+) ]]; then
-      code="${BASH_REMATCH[1]}"; size="${BASH_REMATCH[2]}"
-      speed="$(awk -v s="${metrics##* }" 'BEGIN { printf "%.2f MB/s", s/1024/1024 }')"
-      if [[ "$code" =~ ^2 && "$size" -gt 0 ]]; then
+    if read -r code size speed_bytes time_total <<< "$metrics" && [[ "$code" =~ ^[0-9]{3}$ && "$size" =~ ^[0-9]+$ && "$speed_bytes" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+      speed="$(awk -v s="$speed_bytes" 'BEGIN { printf "%.2f MB/s", s/1024/1024 }')"
+      if [[ "$code" =~ ^2 && "$size" -ge 1048576 ]]; then
         printf '%-32s %-8s %-14s %-18s %s\n' "$name" "$code" "$size bytes" "$speed" "成功"
       else
-        printf '%-32s %-8s %-14s %-18s %s\n' "$name" "$code" "$size bytes" "-" "服务端拒绝/无数据"
+        printf '%-32s %-8s %-14s %-18s %s\n' "$name" "$code" "$size bytes" "-" "服务端拒绝/响应过小"
       fi
     else
       error="${metrics//$'\n'/ }"; error="${error:0:45}"
