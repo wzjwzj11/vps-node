@@ -18,10 +18,11 @@ HY2_PORT="${HY2_PORT:-auto}"
 SNI="${SNI:-auto}"                 # auto=从候选伪装站中选择 TCP/443 延迟最低者
 TAG="${TAG:-vps}"
 SB_VER="${SB_VER:-}"              # 留空=自动取最新版
-SCRIPT_VERSION="v1.0.21"
+SCRIPT_VERSION="v1.0.22"
 SCRIPT_URL="https://raw.githubusercontent.com/wzjwzj11/vps-node/${SCRIPT_VERSION}/vps-node.sh"
 SCRIPT_LATEST_URL="https://raw.githubusercontent.com/wzjwzj11/vps-node/main/vps-node.sh"
-ACTION="${ACTION:-menu}"       # menu / install / sb-update / script-update / update / bbr / net-tune / net-reset / status / scan / node-info / uninstall
+ACTION="${ACTION:-menu}"       # menu / install / sb-update / script-update / update / bbr / net-tune / net-reset / speed-test / status / scan / node-info / uninstall
+SPEEDTEST_URLS="${SPEEDTEST_URLS:-https://speed.cloudflare.com/__down?bytes=10000000,http://ash-speed.hetzner.com/100MB.bin,https://cachefly.cachefly.net/10mb.test}"
 REALITY_TARGETS="${REALITY_TARGETS:-gateway.icloud.com,swdist.apple.com,addons.mozilla.org,www.microsoft.com,dl.google.com,images.unsplash.com,www.amazon.co.jp,yahoo.co.jp,www.intel.com,aws.amazon.com,www.amazon.com,www.samsung.com,www.amd.com,www.sony.com,www.nvidia.com,www.apple.com,www.google.com,www.bing.com,www.yahoo.com}"
 # ====================================
 
@@ -256,6 +257,39 @@ show_node_info() {
   ss -ltnup 2>/dev/null | grep -E ':(443|8443|[2-9][0-9]{4}|[1-9][0-9]{4})[[:space:]]' || echo "未读取到监听端口"
 }
 
+speed_test() {
+  local urls="$SPEEDTEST_URLS" url name code size speed time_total error
+  local -a url_list=()
+  command -v curl >/dev/null 2>&1 || die "测速需要 curl"
+  IFS=',' read -ra url_list <<< "$urls"
+  echo "========== 网络测速 =========="
+  echo "每个地址最多下载 10-100 MB；结果只代表 VPS 到该测速站的线路。"
+  printf '%-32s %-8s %-14s %-18s %s\n' "测速地址" "HTTP" "实际大小" "速度" "结果"
+  printf '%-32s %-8s %-14s %-18s %s\n' "--------------------------------" "--------" "--------------" "------------------" "----------------"
+  for url in "${url_list[@]}"; do
+    url="${url//[[:space:]]/}"
+    [[ -n "$url" ]] || continue
+    name="${url#*://}"; name="${name%%/*}"
+    # 写临时文件确保统计的是实际收到的字节数，不接受仅凭 HTTP 200 判断成功
+    local tmp="$(mktemp /tmp/vps-node-speed.XXXXXX)"
+    local metrics
+    metrics="$(curl -4L --connect-timeout 8 --max-time 45 -sS "$url" -o "$tmp" -w '%{http_code} %{size_download} %{speed_download} %{time_total}' 2>&1)" || true
+    rm -f "$tmp"
+    if [[ "$metrics" =~ ^([0-9]{3})[[:space:]]+([0-9]+) ]]; then
+      code="${BASH_REMATCH[1]}"; size="${BASH_REMATCH[2]}"
+      speed="$(awk -v s="${metrics##* }" 'BEGIN { printf "%.2f MB/s", s/1024/1024 }')"
+      if [[ "$code" =~ ^2 && "$size" -gt 0 ]]; then
+        printf '%-32s %-8s %-14s %-18s %s\n' "$name" "$code" "$size bytes" "$speed" "成功"
+      else
+        printf '%-32s %-8s %-14s %-18s %s\n' "$name" "$code" "$size bytes" "-" "服务端拒绝/无数据"
+      fi
+    else
+      error="${metrics//$'\n'/ }"; error="${error:0:45}"
+      printf '%-32s %-8s %-14s %-18s %s\n' "$name" "-" "0 bytes" "-" "$error"
+    fi
+  done
+}
+
 show_status() {
   echo "========== VPS 节点状态 =========="
   . /etc/os-release 2>/dev/null || true
@@ -337,13 +371,14 @@ if [[ "$ACTION" == "menu" ]]; then
     echo "2. 更新系统软件包"
     echo "3. 开启 BBR"
     echo "4. 网络参数优化（保守）"
-    echo "5. Reality 目标扫描"
-    echo "6. 安装/重建节点配置"
-    echo "7. 查询节点信息"
-    echo "8. 更新 sing-box"
-    echo "9. 更新本机脚本"
-    echo "10. 恢复网络参数"
-    echo "11. 卸载 sing-box"
+    echo "5. 网络测速"
+    echo "6. Reality 目标扫描"
+    echo "7. 安装/重建节点配置"
+    echo "8. 查询节点信息"
+    echo "9. 更新 sing-box"
+    echo "10. 更新本机脚本"
+    echo "11. 恢复网络参数"
+    echo "12. 卸载 sing-box"
     echo "0. 退出"
     read -r -p "请选择: " choice
     case "$choice" in
@@ -351,13 +386,14 @@ if [[ "$ACTION" == "menu" ]]; then
       2) ACTION=update; break ;;
       3) ACTION=bbr; break ;;
       4) ACTION=net-tune; break ;;
-      5) ACTION=scan; break ;;
-      6) ACTION=install; break ;;
-      7) ACTION=node-info; break ;;
-      8) ACTION=sb-update; SB_VER=""; break ;;
-      9) ACTION=script-update; break ;;
-      10) ACTION=net-reset; break ;;
-      11) ACTION=uninstall; break ;;
+      5) ACTION=speed-test; break ;;
+      6) ACTION=scan; break ;;
+      7) ACTION=install; break ;;
+      8) ACTION=node-info; break ;;
+      9) ACTION=sb-update; SB_VER=""; break ;;
+      10) ACTION=script-update; break ;;
+      11) ACTION=net-reset; break ;;
+      12) ACTION=uninstall; break ;;
       0) exit 0 ;;
       *) echo "无效选择" ;;
     esac
@@ -376,6 +412,8 @@ case "$ACTION" in
     echo "系统更新完成；sing-box 若需更新请执行 ACTION=sb-update bash $0"; exit 0 ;;
   status)
     show_status; exit 0 ;;
+  speed-test)
+    speed_test; exit 0 ;;
   scan)
     scan_reality_targets; exit 0 ;;
   node-info)
@@ -398,7 +436,7 @@ case "$ACTION" in
     systemctl daemon-reload
     echo "sing-box 已卸载（不会删除系统包和防火墙规则）"; exit 0 ;;
   install|sb-update|script-update|node-info) ;;
-  *) die "ACTION 只能是 menu/install/sb-update/script-update/update/bbr/net-tune/net-reset/status/scan/node-info/uninstall" ;;
+  *) die "ACTION 只能是 menu/install/sb-update/script-update/update/bbr/net-tune/net-reset/speed-test/status/scan/node-info/uninstall" ;;
 esac
 
 

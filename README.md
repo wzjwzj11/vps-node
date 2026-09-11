@@ -64,6 +64,7 @@ sudo env UUID='你的UUID' VLESS_PORT=443 ANYTLS_PORT=8443 HY2_PORT=auto \
 6. 查询节点信息，复制 VLESS、AnyTLS、Hysteria2 链接，并确认服务和监听端口。
 
 - `4. 网络参数优化（保守）`：在不更换内核、不安装第三方工具的前提下，应用 BBR+FQ、适度 TCP 缓冲区、MTU 探测和 Fast Open
+- `5. 网络测速`：测试多个独立下载地址，显示 HTTP 状态、实际收到字节数和平均下载速度；单个测速站失败不会中断其他测试
 - `10. 恢复网络参数`：删除本脚本的网络优化 drop-in，并恢复执行前保存的参数；BBR 配置本身不删除
 
 首次执行脚本后会自动创建：
@@ -97,7 +98,12 @@ sudo env ACTION=uninstall bash vps-node.sh
 `ACTION=script-update` 从公开仓库的 `main` 下载最新脚本，先检查文件非空、Shell 语法和版本标记，全部通过后才替换 `/usr/local/bin/vps-node.sh`；失败时保留旧版本。
 
 `ACTION=sb-update` 只替换官方 sing-box 二进制，保留现有节点 UUID、Reality 密钥、密码和端口；更新前会用新二进制校验现有配置，校验失败不会重启服务。
-## Reality 目标扫描
+可自定义测速地址（逗号分隔，建议使用你信任的文件服务器）：
+
+```bash
+SPEEDTEST_URLS='https://speed.cloudflare.com/__down?bytes=10000000,http://ash-speed.hetzner.com/100MB.bin' ACTION=speed-test bash vps-node.sh
+```
+
 
 菜单中的 `6. Reality 目标扫描` 会检测候选域名的：
 
