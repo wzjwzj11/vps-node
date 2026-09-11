@@ -18,10 +18,10 @@ HY2_PORT="${HY2_PORT:-auto}"
 SNI="${SNI:-auto}"                 # auto=从候选伪装站中选择 TCP/443 延迟最低者
 TAG="${TAG:-vps}"
 SB_VER="${SB_VER:-}"              # 留空=自动取最新版
-SCRIPT_VERSION="v1.0.20"
+SCRIPT_VERSION="v1.0.21"
 SCRIPT_URL="https://raw.githubusercontent.com/wzjwzj11/vps-node/${SCRIPT_VERSION}/vps-node.sh"
 SCRIPT_LATEST_URL="https://raw.githubusercontent.com/wzjwzj11/vps-node/main/vps-node.sh"
-ACTION="${ACTION:-menu}"       # menu / install / sb-update / script-update / update / bbr / status / scan / node-info / uninstall
+ACTION="${ACTION:-menu}"       # menu / install / sb-update / script-update / update / bbr / net-tune / net-reset / status / scan / node-info / uninstall
 REALITY_TARGETS="${REALITY_TARGETS:-gateway.icloud.com,swdist.apple.com,addons.mozilla.org,www.microsoft.com,dl.google.com,images.unsplash.com,www.amazon.co.jp,yahoo.co.jp,www.intel.com,aws.amazon.com,www.amazon.com,www.samsung.com,www.amd.com,www.sony.com,www.nvidia.com,www.apple.com,www.google.com,www.bing.com,www.yahoo.com}"
 # ====================================
 
@@ -152,6 +152,62 @@ choose_sni() {
   fi
 }
 
+network_tune() {
+  enable_bbr
+  local conf=/etc/sysctl.d/99-vps-node-network.conf backup=/var/lib/vps-node/network-tune.before
+  install -d -m 700 /var/lib/vps-node /etc/sysctl.d || die "无法创建网络优化目录"
+  if [[ ! -s "$backup" ]]; then
+    {
+      sysctl -n net.core.rmem_max 2>/dev/null || true
+      sysctl -n net.core.wmem_max 2>/dev/null || true
+      sysctl -n net.ipv4.tcp_rmem 2>/dev/null || true
+      sysctl -n net.ipv4.tcp_wmem 2>/dev/null || true
+      sysctl -n net.ipv4.tcp_limit_output_bytes 2>/dev/null || true
+      sysctl -n net.ipv4.tcp_slow_start_after_idle 2>/dev/null || true
+      sysctl -n net.ipv4.tcp_fastopen 2>/dev/null || true
+      sysctl -n net.ipv4.tcp_mtu_probing 2>/dev/null || true
+    } > "$backup"
+    chmod 600 "$backup"
+  fi
+  cat > "$conf" <<'EOF'
+# Managed by vps-node; conservative TCP tuning, no third-party kernel
+net.core.default_qdisc=fq
+net.ipv4.tcp_congestion_control=bbr
+net.core.rmem_max=67108864
+net.core.wmem_max=67108864
+net.ipv4.tcp_rmem=4096 131072 33554432
+net.ipv4.tcp_wmem=4096 131072 33554432
+net.ipv4.tcp_limit_output_bytes=4194304
+net.ipv4.tcp_slow_start_after_idle=0
+net.ipv4.tcp_fastopen=3
+net.ipv4.tcp_mtu_probing=1
+EOF
+  if ! sysctl --load="$conf"; then
+    rm -f "$conf"; die "网络优化参数应用失败，未保留新配置"
+  fi
+  ok "已应用保守网络优化（BBR+FQ、TCP 缓冲区、MTU 探测）"
+  echo "配置文件: $conf"
+  echo "当前: qdisc=$(sysctl -n net.core.default_qdisc) cc=$(sysctl -n net.ipv4.tcp_congestion_control)"
+}
+
+network_reset() {
+  local conf=/etc/sysctl.d/99-vps-node-network.conf backup=/var/lib/vps-node/network-tune.before
+  rm -f "$conf"
+  if [[ -s "$backup" ]]; then
+    mapfile -t old < "$backup"
+    [[ -n "${old[0]:-}" ]] && sysctl -w net.core.rmem_max="${old[0]}" >/dev/null || true
+    [[ -n "${old[1]:-}" ]] && sysctl -w net.core.wmem_max="${old[1]}" >/dev/null || true
+    [[ -n "${old[2]:-}" ]] && sysctl -w net.ipv4.tcp_rmem="${old[2]}" >/dev/null || true
+    [[ -n "${old[3]:-}" ]] && sysctl -w net.ipv4.tcp_wmem="${old[3]}" >/dev/null || true
+    [[ -n "${old[4]:-}" ]] && sysctl -w net.ipv4.tcp_limit_output_bytes="${old[4]}" >/dev/null || true
+    [[ -n "${old[5]:-}" ]] && sysctl -w net.ipv4.tcp_slow_start_after_idle="${old[5]}" >/dev/null || true
+    [[ -n "${old[6]:-}" ]] && sysctl -w net.ipv4.tcp_fastopen="${old[6]}" >/dev/null || true
+    [[ -n "${old[7]:-}" ]] && sysctl -w net.ipv4.tcp_mtu_probing="${old[7]}" >/dev/null || true
+    rm -f "$backup"
+  fi
+  ok "已移除 vps-node 网络优化配置；BBR 配置保持不变"
+}
+
 enable_bbr() {
   command -v sysctl >/dev/null 2>&1 || { die "缺少 sysctl"; return 1; }
   [[ -r /proc/sys/net/ipv4/tcp_available_congestion_control ]] || { die "系统不支持读取 TCP 拥塞控制算法"; return 1; }
@@ -280,24 +336,28 @@ if [[ "$ACTION" == "menu" ]]; then
     echo "1. 查看 VPS 基础状态"
     echo "2. 更新系统软件包"
     echo "3. 开启 BBR"
-    echo "4. Reality 目标扫描"
-    echo "5. 安装/重建节点配置"
-    echo "6. 查询节点信息"
-    echo "7. 更新 sing-box"
-    echo "8. 更新本机脚本"
-    echo "9. 卸载 sing-box"
+    echo "4. 网络参数优化（保守）"
+    echo "5. Reality 目标扫描"
+    echo "6. 安装/重建节点配置"
+    echo "7. 查询节点信息"
+    echo "8. 更新 sing-box"
+    echo "9. 更新本机脚本"
+    echo "10. 恢复网络参数"
+    echo "11. 卸载 sing-box"
     echo "0. 退出"
     read -r -p "请选择: " choice
     case "$choice" in
       1) ACTION=status; break ;;
       2) ACTION=update; break ;;
       3) ACTION=bbr; break ;;
-      4) ACTION=scan; break ;;
-      5) ACTION=install; break ;;
-      6) ACTION=node-info; break ;;
-      7) ACTION=sb-update; SB_VER=""; break ;;
-      8) ACTION=script-update; break ;;
-      9) ACTION=uninstall; break ;;
+      4) ACTION=net-tune; break ;;
+      5) ACTION=scan; break ;;
+      6) ACTION=install; break ;;
+      7) ACTION=node-info; break ;;
+      8) ACTION=sb-update; SB_VER=""; break ;;
+      9) ACTION=script-update; break ;;
+      10) ACTION=net-reset; break ;;
+      11) ACTION=uninstall; break ;;
       0) exit 0 ;;
       *) echo "无效选择" ;;
     esac
@@ -327,6 +387,10 @@ case "$ACTION" in
     ;;
   bbr)
     enable_bbr; exit 0 ;;
+  net-tune)
+    network_tune; exit 0 ;;
+  net-reset)
+    network_reset; exit 0 ;;
   uninstall)
     systemctl disable --now sing-box 2>/dev/null || true
     rm -f /usr/local/bin/sing-box /etc/systemd/system/sing-box.service
@@ -334,7 +398,7 @@ case "$ACTION" in
     systemctl daemon-reload
     echo "sing-box 已卸载（不会删除系统包和防火墙规则）"; exit 0 ;;
   install|sb-update|script-update|node-info) ;;
-  *) die "ACTION 只能是 menu/install/sb-update/script-update/update/bbr/status/scan/node-info/uninstall" ;;
+  *) die "ACTION 只能是 menu/install/sb-update/script-update/update/bbr/net-tune/net-reset/status/scan/node-info/uninstall" ;;
 esac
 
 

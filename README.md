@@ -63,8 +63,8 @@ sudo env UUID='你的UUID' VLESS_PORT=443 ANYTLS_PORT=8443 HY2_PORT=auto \
 5. 安装节点，`SNI=auto` 会重新测量并选择 TLS 握手中位延迟较低的候选目标，HY2 自动选择空闲高位 UDP 端口。
 6. 查询节点信息，复制 VLESS、AnyTLS、Hysteria2 链接，并确认服务和监听端口。
 
-后续维护功能位于菜单第 7-9 项：更新 sing-box、更新本机脚本、卸载 sing-box。
-
+- `4. 网络参数优化（保守）`：在不更换内核、不安装第三方工具的前提下，应用 BBR+FQ、适度 TCP 缓冲区、MTU 探测和 Fast Open
+- `10. 恢复网络参数`：删除本脚本的网络优化 drop-in，并恢复执行前保存的参数；BBR 配置本身不删除
 
 首次执行脚本后会自动创建：
 
