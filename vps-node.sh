@@ -18,7 +18,7 @@ HY2_PORT="${HY2_PORT:-auto}"
 SNI="${SNI:-auto}"                 # auto=从候选伪装站中选择 TCP/443 延迟最低者
 TAG="${TAG:-vps}"
 SB_VER="${SB_VER:-}"              # 留空=自动取最新版
-SCRIPT_VERSION="v1.0.25"
+SCRIPT_VERSION="v1.0.26"
 SCRIPT_URL="https://raw.githubusercontent.com/wzjwzj11/vps-node/${SCRIPT_VERSION}/vps-node.sh"
 SCRIPT_LATEST_URL="https://raw.githubusercontent.com/wzjwzj11/vps-node/main/vps-node.sh"
 ACTION="${ACTION:-menu}"       # menu / install / sb-update / script-update / update / bbr / net-tune / net-reset / speed-test / status / csv-scan / node-info / uninstall
@@ -291,6 +291,13 @@ speed_test() {
 }
 
 reality_checker_csv() {
+  if ! command -v curl >/dev/null 2>&1 || ! command -v unzip >/dev/null 2>&1; then
+    if command -v apt-get >/dev/null 2>&1; then apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq curl unzip
+    elif command -v dnf >/dev/null 2>&1; then dnf install -y curl unzip
+    elif command -v yum >/dev/null 2>&1; then yum install -y curl unzip
+    elif command -v apk >/dev/null 2>&1; then apk add --no-cache curl unzip
+    else die "CSV 检测需要 curl 和 unzip"; fi
+  fi
   command -v curl >/dev/null 2>&1 || die "CSV 检测需要 curl"
   command -v unzip >/dev/null 2>&1 || die "CSV 检测需要 unzip"
   mkdir -p "$REALITYSCAN_DIR"
@@ -541,7 +548,7 @@ install_pkgs() {
 }
 
 NEED=()
-for c in curl tar openssl jq; do command -v "$c" >/dev/null || NEED+=("$c"); done
+for c in curl tar openssl jq unzip; do command -v "$c" >/dev/null || NEED+=("$c"); done
 # jq 在 alpine 叫 jq, 其它同名; openssl 必需(生成自签证书)
 [[ ${#NEED[@]} -gt 0 ]] && { info "安装依赖: ${NEED[*]}"; install_pkgs "${NEED[@]}"; }
 
