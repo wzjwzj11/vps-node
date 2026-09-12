@@ -5,7 +5,7 @@
 # 特点: 只从官方源下载 (SagerNet/sing-box GitHub Releases)，无第三方中转
 # 用法: bash <(curl -fsSL <你的脚本地址>)     或     bash vps-node.sh
 # 可自定义环境变量(全部可选):
-#   UUID=...  VLESS_PORT=443  ANYTLS_PORT=8443  HY2_PORT=auto  SNI=auto  TAG=myserver
+#   UUID=...  VLESS_PORT=443  ANYTLS_PORT=8443  HY2_PORT=auto  SUB_PORT=2096  SNI=auto  TAG=myserver
 #
 set -euo pipefail
 
@@ -15,15 +15,19 @@ UUID="${UUID:-}"
 VLESS_PORT="${VLESS_PORT:-443}"
 ANYTLS_PORT="${ANYTLS_PORT:-8443}"
 HY2_PORT="${HY2_PORT:-auto}"
+SUB_PORT="${SUB_PORT:-2096}"
 SNI="${SNI:-auto}"                 # auto=从候选伪装站中选择 TCP/443 延迟最低者
 TAG="${TAG:-vps}"
 SB_VER="${SB_VER:-}"              # 留空=自动取最新版
-SCRIPT_VERSION="v1.0.29"
+SCRIPT_VERSION="v1.0.30"
 SCRIPT_URL="https://raw.githubusercontent.com/wzjwzj11/vps-node/${SCRIPT_VERSION}/vps-node.sh"
 SCRIPT_LATEST_URL="https://raw.githubusercontent.com/wzjwzj11/vps-node/main/vps-node.sh"
 ACTION="${ACTION:-menu}"       # menu / install / sb-update / script-update / update / bbr / net-tune / net-reset / speed-test / status / csv-scan / node-info / uninstall
 REALITYCHECKER_VERSION="${REALITYCHECKER_VERSION:-v2.2.3}"
 REALITYSCAN_DIR="${REALITYSCAN_DIR:-/root/reality-scan}"
+SUB_DIR="/var/lib/vps-node/subscription"
+SUB_PORT="${SUB_PORT:-2096}"
+SUB_SERVICE="vps-node-subscription.service"
 REALITY_TARGETS="${REALITY_TARGETS:-gateway.icloud.com,swdist.apple.com,addons.mozilla.org,www.microsoft.com,dl.google.com,images.unsplash.com,www.amazon.co.jp,yahoo.co.jp,www.intel.com,aws.amazon.com,www.amazon.com,www.samsung.com,www.amd.com,www.sony.com,www.nvidia.com,www.apple.com,www.google.com,www.bing.com,www.yahoo.com}"
 # ====================================
 
@@ -254,6 +258,15 @@ show_node_info() {
   fi
   echo "---------- 当前服务 ----------"
   systemctl --no-pager --full status sing-box 2>/dev/null | sed -n '1,12p' || true
+  echo "---------- 订阅地址 ----------"
+  if [[ -s "$SUB_DIR/token" ]]; then
+    local sub_ip
+    sub_ip="$(curl -4fsSL --max-time 5 https://api.ipify.org 2>/dev/null || echo '<VPS_IP>')"
+    echo "http://${sub_ip}:${SUB_PORT}/sub/$(tr -d '[:space:]' < "$SUB_DIR/token")"
+    echo "订阅服务: $(systemctl is-active "$SUB_SERVICE" 2>/dev/null || echo inactive)"
+  else
+    echo "未生成订阅"
+  fi
   echo "---------- 当前监听 ----------"
   ss -ltnup 2>/dev/null | grep -E ':(443|8443|[2-9][0-9]{4}|[1-9][0-9]{4})[[:space:]]' || echo "未读取到监听端口"
 }
@@ -356,6 +369,91 @@ reality_checker_csv() {
   apply_reality_sni "$selected"
 }
 
+subscription_payload() {
+  mkdir -p "$SUB_DIR"
+  if [[ ! -s "$SUB_DIR/token" ]]; then
+    openssl rand -hex 24 > "$SUB_DIR/token"
+    chmod 600 "$SUB_DIR/token"
+  fi
+  SUB_TOKEN="$(tr -d '[:space:]' < "$SUB_DIR/token")"
+  printf '%s\n' "$VLESS_LINK" "$ANYTLS_LINK" "$HY2_LINK" > "$SUB_DIR/links.txt"
+  chmod 600 "$SUB_DIR/links.txt"
+  if base64 --help 2>&1 | grep -q -- '-w'; then
+    base64 -w0 "$SUB_DIR/links.txt" > "$SUB_DIR/subscription.b64"
+  else
+    base64 "$SUB_DIR/links.txt" | tr -d '\n' > "$SUB_DIR/subscription.b64"
+  fi
+  chmod 644 "$SUB_DIR/subscription.b64"
+}
+
+install_subscription_service() {
+  command -v python3 >/dev/null 2>&1 || die "订阅服务需要 python3"
+  install -d -m 755 /usr/local/libexec
+  cat > /usr/local/libexec/vps-node-subscription.py <<'PY'
+#!/usr/bin/env python3
+import argparse
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--dir', required=True)
+parser.add_argument('--port', required=True, type=int)
+args = parser.parse_args()
+root = Path(args.dir)
+
+class Handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        token = (root / 'token').read_text().strip()
+        if self.path != '/sub/' + token:
+            self.send_error(404)
+            return
+        data = (root / 'subscription.b64').read_bytes()
+        self.send_response(200)
+        self.send_header('Content-Type', 'text/plain; charset=utf-8')
+        self.send_header('Cache-Control', 'no-store')
+        self.send_header('Content-Length', str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+    def log_message(self, fmt, *args):
+        return
+
+ThreadingHTTPServer(('0.0.0.0', args.port), Handler).serve_forever()
+PY
+  chmod 755 /usr/local/libexec/vps-node-subscription.py
+  cat > "/etc/systemd/system/$SUB_SERVICE" <<EOF
+[Unit]
+Description=vps-node private subscription
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/python3 /usr/local/libexec/vps-node-subscription.py --dir $SUB_DIR --port $SUB_PORT
+Restart=on-failure
+RestartSec=3s
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target
+EOF
+  systemctl daemon-reload
+  systemctl enable --now "$SUB_SERVICE" >/dev/null 2>&1
+  systemctl is-active --quiet "$SUB_SERVICE" || die "订阅服务启动失败，请查看 journalctl -u $SUB_SERVICE"
+}
+
+refresh_subscription_sni() {
+  local old="$1" new="$2"
+  [[ -s "$SUB_DIR/links.txt" ]] || return 0
+  sed -i "s|$old|$new|g" "$SUB_DIR/links.txt"
+  if base64 --help 2>&1 | grep -q -- '-w'; then
+    base64 -w0 "$SUB_DIR/links.txt" > "$SUB_DIR/subscription.b64"
+  else
+    base64 "$SUB_DIR/links.txt" | tr -d '\n' > "$SUB_DIR/subscription.b64"
+  fi
+  chmod 644 "$SUB_DIR/subscription.b64"
+}
+
 apply_reality_sni() {
   local selected="$1" conf=/etc/sing-box/config.json backup old_sni info_file
   [[ "$selected" =~ ^[A-Za-z0-9.-]+$ ]] || die "域名格式无效: $selected"
@@ -380,6 +478,7 @@ apply_reality_sni() {
   fi
   info_file="$(find /root -maxdepth 1 -type f -name 'node_info_*.txt' -printf '%T@ %p\n' 2>/dev/null | sort -nr | awk 'NR==1{$1=""; sub(/^ /,""); print}')"
   if [[ -n "$info_file" && -w "$info_file" ]]; then sed -i "s|$old_sni|$selected|g" "$info_file"; fi
+  refresh_subscription_sni "$old_sni" "$selected"
   rm -f "$backup"
   ok "Reality 域名已修改: $old_sni -> $selected"
   ok "VLESS 和 AnyTLS 已重启生效；新的节点链接可用菜单查询节点信息获取"
@@ -397,9 +496,9 @@ show_status() {
   systemctl is-active sing-box 2>/dev/null || true
   local status_hy2_port="$HY2_PORT"
   if [[ "$status_hy2_port" == "auto" && -r /etc/sing-box/config.json ]] && command -v jq >/dev/null 2>&1; then
-    status_hy2_port="$(jq -r '.inbounds[] | select(.tag=="hy2") | .listen_port' /etc/sing-box/config.json 2>/dev/null || echo auto)"
+    status_hy2_port="$(jq -r '.inbounds[] | select(.tag==\"hy2\") | .listen_port' /etc/sing-box/config.json 2>/dev/null || echo auto)"
   fi
-  for pair in "${VLESS_PORT}:tcp" "${ANYTLS_PORT}:tcp" "${status_hy2_port}:udp"; do
+  for pair in "${VLESS_PORT}:tcp" "${ANYTLS_PORT}:tcp" "${status_hy2_port}:udp" "${SUB_PORT}:tcp"; do
     p="${pair%%:*}"; proto="${pair##*:}"
     port_in_use "$p" "$proto" && echo "端口 $p/$proto: 已监听" || echo "端口 $p/$proto: 未监听"
   done
@@ -525,6 +624,10 @@ case "$ACTION" in
   net-reset)
     network_reset; exit 0 ;;
   uninstall)
+    systemctl disable --now "$SUB_SERVICE" 2>/dev/null || true
+    rm -f "/etc/systemd/system/$SUB_SERVICE" /usr/local/libexec/vps-node-subscription.py
+    rm -rf "$SUB_DIR"
+    systemctl daemon-reload
     systemctl disable --now sing-box 2>/dev/null || true
     rm -f /usr/local/bin/sing-box /etc/systemd/system/sing-box.service
     rm -rf /etc/sing-box
@@ -570,7 +673,7 @@ for c in curl tar openssl jq unzip; do command -v "$c" >/dev/null || NEED+=("$c"
 choose_sni || { SNI="${SNI:-www.microsoft.com}"; warn "伪装域名自动选择失败，回退到 $SNI"; }
 
 # ---------- 1. 安装 sing-box (官方 GitHub Release) ----------
-for pair in "${VLESS_PORT}:tcp" "${ANYTLS_PORT}:tcp" "${HY2_PORT}:udp"; do
+for pair in "${VLESS_PORT}:tcp" "${ANYTLS_PORT}:tcp" "${HY2_PORT}:udp" "${SUB_PORT}:tcp"; do
   p="${pair%%:*}"; proto="${pair##*:}"
   if port_in_use "$p" "$proto" && ! systemctl is-active --quiet sing-box 2>/dev/null; then
     warn "端口 $p/$proto 已被其他服务监听；后续 sing-box 启动可能失败"
@@ -728,14 +831,14 @@ ok "sing-box 服务运行中 (开机自启)"
 
 # ---------- 5. 防火墙 + BBR ----------
 if command -v ufw >/dev/null && ufw status 2>/dev/null | grep -qi active; then
-  ufw allow ${VLESS_PORT}/tcp >/dev/null; ufw allow ${ANYTLS_PORT}/tcp >/dev/null; ufw allow ${HY2_PORT}/udp >/dev/null
-  ok "ufw 已放行 ${VLESS_PORT}/tcp ${ANYTLS_PORT}/tcp ${HY2_PORT}/udp"
+  ufw allow ${VLESS_PORT}/tcp >/dev/null; ufw allow ${ANYTLS_PORT}/tcp >/dev/null; ufw allow ${HY2_PORT}/udp >/dev/null; ufw allow ${SUB_PORT}/tcp >/dev/null
+  ok "ufw 已放行 ${VLESS_PORT}/tcp ${ANYTLS_PORT}/tcp ${HY2_PORT}/udp ${SUB_PORT}/tcp"
 elif command -v firewall-cmd >/dev/null && firewall-cmd --state 2>/dev/null | grep -q running; then
-  firewall-cmd --permanent --add-port=${VLESS_PORT}/tcp --add-port=${ANYTLS_PORT}/tcp --add-port=${HY2_PORT}/udp >/dev/null
+  firewall-cmd --permanent --add-port=${VLESS_PORT}/tcp --add-port=${ANYTLS_PORT}/tcp --add-port=${HY2_PORT}/udp --add-port=${SUB_PORT}/tcp >/dev/null
   firewall-cmd --reload >/dev/null
   ok "firewalld 已放行端口"
 else
-  warn "未检测到活动防火墙；如 VPS 商家有网页安全组，请自行放行 ${VLESS_PORT}/tcp、${ANYTLS_PORT}/tcp 与 ${HY2_PORT}/udp"
+  warn "未检测到活动防火墙；如 VPS 商家有网页安全组，请自行放行 ${VLESS_PORT}/tcp、${ANYTLS_PORT}/tcp、${HY2_PORT}/udp 与订阅 ${SUB_PORT}/tcp"
 fi
 
 if ! sysctl net.ipv4.tcp_congestion_control 2>/dev/null | grep -q bbr; then
@@ -751,6 +854,10 @@ PUB_IP="$(curl -fsSL -4 --max-time 8 https://api.ipify.org 2>/dev/null || curl -
 VLESS_LINK="vless://${UUID}@${PUB_IP}:${VLESS_PORT}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${SNI}&fp=chrome&pbk=${PUB_KEY}&sid=${SHORT_ID}&type=tcp#${TAG}-reality"
 ANYTLS_LINK="anytls://${ANYTLS_PASS}@${PUB_IP}:${ANYTLS_PORT}?security=reality&sni=${SNI}&fp=chrome&pbk=${PUB_KEY}&sid=${SHORT_ID}#${TAG}-anytls"
 HY2_LINK="hysteria2://${HY2_PASS}@${PUB_IP}:${HY2_PORT}/?sni=${SNI}&insecure=1&alpn=h3#${TAG}-hy2"
+
+subscription_payload
+install_subscription_service
+SUB_LINK="http://${PUB_IP}:${SUB_PORT}/sub/${SUB_TOKEN}"
 
 INFO_FILE="/root/node_info_$(date +%Y%m%d).txt"
 {
@@ -770,6 +877,8 @@ INFO_FILE="/root/node_info_$(date +%Y%m%d).txt"
   echo "端口:          $HY2_PORT/udp"
   echo "密码:          $HY2_PASS"
   echo "sni:           $SNI (自签证书, 客户端需允许不安全/insecure)"
+  echo "--- 订阅地址 ---"
+  echo "$SUB_LINK"
   echo "--- 分享链接 ---"
   echo "$VLESS_LINK"
   echo "$ANYTLS_LINK"

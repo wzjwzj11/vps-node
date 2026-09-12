@@ -35,7 +35,7 @@ less vps-node.sh
 sudo bash vps-node.sh
 
 # 显式指定参数
-sudo env UUID='你的UUID' VLESS_PORT=443 ANYTLS_PORT=8443 HY2_PORT=auto \
+sudo env UUID='你的UUID' VLESS_PORT=443 ANYTLS_PORT=8443 HY2_PORT=auto SUB_PORT=2096 \
   SNI=www.microsoft.com TAG=my-vps bash vps-node.sh
 ```
 
@@ -73,7 +73,8 @@ sudo env UUID='你的UUID' VLESS_PORT=443 ANYTLS_PORT=8443 HY2_PORT=auto \
 
 - `4. 网络参数优化（保守）`：在不更换内核、不安装第三方工具的前提下，应用 BBR+FQ、适度 TCP 缓冲区、MTU 探测和 Fast Open
 - `5. 网络测速`：测试多个独立下载地址，显示 HTTP 状态、实际收到字节数和平均下载速度；单个测速站失败不会中断其他测试
-- `10. 恢复网络参数`：删除本脚本的网络优化 drop-in，并恢复执行前保存的参数；BBR 配置本身不删除
+- `8. 查询节点信息` 会同时显示三个独立节点链接和私有订阅地址；客户端添加订阅后，后续刷新即可同步最新三个节点链接
+- `11. 恢复网络参数`：删除本脚本的网络优化 drop-in，并恢复执行前保存的参数；BBR 配置本身不删除
 
 首次执行脚本后会自动创建：
 
@@ -113,7 +114,24 @@ SPEEDTEST_URLS='https://speed.cloudflare.com/__down?bytes=10000000,http://ash-sp
 ```
 
 
-## CSV Reality 扫描与修改域名
+## 订阅地址
+
+安装/重建节点后会生成一个带随机令牌的订阅地址，例如：
+
+```text
+http://VPS_IP:2096/sub/随机令牌
+```
+
+订阅内容是三个节点的 Base64 列表：
+
+- VLESS-Reality
+- AnyTLS-Reality
+- Hysteria2
+
+客户端只需添加一次订阅，之后在 VPS 上修改 Reality 域名或重建节点后，客户端刷新订阅即可获得当前链接。重建节点会重新生成密码/密钥，旧订阅内容会随之更新。
+
+订阅服务监听 `SUB_PORT`，默认 `2096/tcp`。Oracle Cloud 还需要在 OCI Security List/NSG 放行该端口。订阅令牌相当于访问凭据，不要公开分享；如泄露，可删除 `/var/lib/vps-node/subscription/token` 后重新运行安装生成新令牌。
+
 
 新的菜单 `6. CSV Reality 扫描/修改域名` 不再从 VPS 直接扫描 VPS IP。推荐流程是：
 
