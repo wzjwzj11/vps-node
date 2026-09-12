@@ -19,12 +19,13 @@ SUB_PORT="${SUB_PORT:-2096}"
 SNI="${SNI:-auto}"                 # auto=从候选伪装站中选择 TCP/443 延迟最低者
 TAG="${TAG:-vps}"
 SB_VER="${SB_VER:-}"              # 留空=自动取最新版
-SCRIPT_VERSION="v1.0.30"
+SCRIPT_VERSION="v1.0.31"
 SCRIPT_URL="https://raw.githubusercontent.com/wzjwzj11/vps-node/${SCRIPT_VERSION}/vps-node.sh"
 SCRIPT_LATEST_URL="https://raw.githubusercontent.com/wzjwzj11/vps-node/main/vps-node.sh"
 ACTION="${ACTION:-menu}"       # menu / install / sb-update / script-update / update / bbr / net-tune / net-reset / speed-test / status / csv-scan / node-info / uninstall
 REALITYCHECKER_VERSION="${REALITYCHECKER_VERSION:-v2.2.3}"
 REALITYSCAN_DIR="${REALITYSCAN_DIR:-/root/reality-scan}"
+SNI_FILE="/etc/sing-box/reality_sni"
 SUB_DIR="/var/lib/vps-node/subscription"
 SUB_PORT="${SUB_PORT:-2096}"
 SUB_SERVICE="vps-node-subscription.service"
@@ -247,6 +248,9 @@ EOF
 
 show_node_info() {
   local info_file latest=""
+  if [[ ! -s "$SUB_DIR/token" ]]; then
+    ensure_subscription_from_info >/dev/null 2>&1 || true
+  fi
   latest="$(find /root -maxdepth 1 -type f -name 'node_info_*.txt' -printf '%T@ %p\n' 2>/dev/null | sort -nr | awk 'NR==1{$1=""; sub(/^ /,""); print}')"
   echo "========== 节点信息 =========="
   if [[ -n "$latest" && -r "$latest" ]]; then
@@ -386,6 +390,30 @@ subscription_payload() {
   chmod 644 "$SUB_DIR/subscription.b64"
 }
 
+ensure_subscription_from_info() {
+  local info_file latest="" vless_link anytls_link hy2_link sub_ip
+  latest="$(find /root -maxdepth 1 -type f -name 'node_info_*.txt' -printf '%T@ %p\n' 2>/dev/null | sort -nr | awk 'NR==1{$1=""; sub(/^ /,""); print}')"
+  [[ -n "$latest" && -r "$latest" ]] || return 1
+  vless_link="$(grep -m1 '^vless://' "$latest" || true)"
+  anytls_link="$(grep -m1 '^anytls://' "$latest" || true)"
+  hy2_link="$(grep -m1 '^hysteria2://' "$latest" || true)"
+  [[ -n "$vless_link" && -n "$anytls_link" && -n "$hy2_link" ]] || return 1
+  mkdir -p "$SUB_DIR"
+  if [[ ! -s "$SUB_DIR/token" ]]; then
+    openssl rand -hex 24 > "$SUB_DIR/token"
+    chmod 600 "$SUB_DIR/token"
+  fi
+  SUB_TOKEN="$(tr -d '[:space:]' < "$SUB_DIR/token")"
+  printf '%s\n' "$vless_link" "$anytls_link" "$hy2_link" > "$SUB_DIR/links.txt"
+  chmod 600 "$SUB_DIR/links.txt"
+  if base64 --help 2>&1 | grep -q -- '-w'; then base64 -w0 "$SUB_DIR/links.txt" > "$SUB_DIR/subscription.b64"; else base64 "$SUB_DIR/links.txt" | tr -d '\n' > "$SUB_DIR/subscription.b64"; fi
+  chmod 644 "$SUB_DIR/subscription.b64"
+  install_subscription_service
+  sub_ip="$(curl -4fsSL --max-time 5 https://api.ipify.org 2>/dev/null || echo '<VPS_IP>')"
+  SUB_LINK="http://${sub_ip}:${SUB_PORT}/sub/${SUB_TOKEN}"
+  return 0
+}
+
 install_subscription_service() {
   command -v python3 >/dev/null 2>&1 || die "订阅服务需要 python3"
   install -d -m 755 /usr/local/libexec
@@ -454,11 +482,18 @@ refresh_subscription_sni() {
   chmod 644 "$SUB_DIR/subscription.b64"
 }
 
+validate_reality_target() {
+  local target="$1" tcp_ms tls_ms
+  read -r tcp_ms tls_ms <<< "$(probe_host "$target")"
+  [[ "$tls_ms" =~ ^[0-9]+$ ]] || die "VPS 到目标 $target 的 TLS 握手失败，未修改配置"
+}
+
 apply_reality_sni() {
   local selected="$1" conf=/etc/sing-box/config.json backup old_sni info_file
   [[ "$selected" =~ ^[A-Za-z0-9.-]+$ ]] || die "域名格式无效: $selected"
   [[ -s "$conf" ]] || die "未找到 $conf，请先安装节点"
   command -v jq >/dev/null 2>&1 || die "修改配置需要 jq"
+  validate_reality_target "$selected"
   backup="${conf}.bak.$(date +%Y%m%d%H%M%S)"
   old_sni="$(jq -r '[.inbounds[] | select((.type=="vless" or .type=="anytls") and .tls.reality.enabled==true) | .tls.server_name][0] // empty' "$conf")"
   [[ -n "$old_sni" ]] || die "配置中没有 VLESS/AnyTLS Reality 入站"

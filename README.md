@@ -129,7 +129,7 @@ http://VPS_IP:2096/sub/随机令牌
 - Hysteria2
 
 客户端只需添加一次订阅，之后在 VPS 上修改 Reality 域名或重建节点后，客户端刷新订阅即可获得当前链接。重建节点会重新生成密码/密钥，旧订阅内容会随之更新。
-
+如果旧节点已经安装但显示“未生成订阅”，运行菜单 `8. 查询节点信息` 会尝试从最新的 `/root/node_info_*.txt` 迁移三个已有链接生成订阅，不会重生成密钥或重建 sing-box。
 订阅服务监听 `SUB_PORT`，默认 `2096/tcp`。Oracle Cloud 还需要在 OCI Security List/NSG 放行该端口。订阅令牌相当于访问凭据，不要公开分享；如泄露，可删除 `/var/lib/vps-node/subscription/token` 后重新运行安装生成新令牌。
 
 
@@ -201,6 +201,7 @@ sudo env REALITY_TARGETS='www.intel.com,aws.amazon.com,www.apple.com,www.microso
 
 - `443/tcp`（VLESS-Reality）
 - `8443/tcp`（AnyTLS）
+- `2096/tcp`（订阅地址；Oracle Cloud 需在 OCI 安全组/NSG 放行）
 - `随机高位 udp 端口`（Hysteria2；安装完成后以输出的实际端口和分享链接为准）
 
 如果只需要某个协议，可在安装后关闭对应端口和入站配置。修改配置后先运行：
