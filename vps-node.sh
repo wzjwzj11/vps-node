@@ -18,7 +18,7 @@ HY2_PORT="${HY2_PORT:-auto}"
 SNI="${SNI:-auto}"                 # auto=从候选伪装站中选择 TCP/443 延迟最低者
 TAG="${TAG:-vps}"
 SB_VER="${SB_VER:-}"              # 留空=自动取最新版
-SCRIPT_VERSION="v1.0.26"
+SCRIPT_VERSION="v1.0.27"
 SCRIPT_URL="https://raw.githubusercontent.com/wzjwzj11/vps-node/${SCRIPT_VERSION}/vps-node.sh"
 SCRIPT_LATEST_URL="https://raw.githubusercontent.com/wzjwzj11/vps-node/main/vps-node.sh"
 ACTION="${ACTION:-menu}"       # menu / install / sb-update / script-update / update / bbr / net-tune / net-reset / speed-test / status / csv-scan / node-info / uninstall
@@ -326,7 +326,7 @@ reality_checker_csv() {
   mapfile -t domains < <(printf '%s\n' "$cleaned" | awk -F '│' '$2 !~ /最终域名/ && $2 !~ /^[[:space:]-]*$/ && NF >= 3 {gsub(/^[[:space:]]+|[[:space:]]+$/, "", $2); if ($2 ~ /^[A-Za-z0-9.-]+$/) print $2}' | sort -u)
   if ((${#domains[@]} == 0)); then
     warn "未能从 RealityChecker 输出解析适合域名，回退到 CSV 的 ORIGIN 列；请人工确认报告"
-    mapfile -t domains < <(awk -F',' 'NR>1 {gsub(/\r/,""); gsub(/^"|"$/,"",$2); if ($2!="") print $2}' "$csv_file" | sort -u)
+    mapfile -t domains < <(awk -F',' 'NR>1 {gsub(/\r/,""); gsub(/^"|"$/,"",$3); if ($3!="") print $3}' "$csv_file" | sort -u)
   fi
   ((${#domains[@]} > 0)) || die "未找到可选择的域名"
   local i choice selected
