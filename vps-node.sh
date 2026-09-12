@@ -18,7 +18,7 @@ HY2_PORT="${HY2_PORT:-auto}"
 SNI="${SNI:-auto}"                 # auto=从候选伪装站中选择 TCP/443 延迟最低者
 TAG="${TAG:-vps}"
 SB_VER="${SB_VER:-}"              # 留空=自动取最新版
-SCRIPT_VERSION="v1.0.27"
+SCRIPT_VERSION="v1.0.28"
 SCRIPT_URL="https://raw.githubusercontent.com/wzjwzj11/vps-node/${SCRIPT_VERSION}/vps-node.sh"
 SCRIPT_LATEST_URL="https://raw.githubusercontent.com/wzjwzj11/vps-node/main/vps-node.sh"
 ACTION="${ACTION:-menu}"       # menu / install / sb-update / script-update / update / bbr / net-tune / net-reset / speed-test / status / csv-scan / node-info / uninstall
@@ -313,32 +313,31 @@ reality_checker_csv() {
   local csv_file=""
   csv_file="$(find "$REALITYSCAN_DIR" -maxdepth 1 -type f -name '*.csv' -printf '%T@ %p\n' 2>/dev/null | sort -nr | awk 'NR==1{$1=""; sub(/^ /,""); print}')"
   [[ -n "$csv_file" && -r "$csv_file" ]] || die "未找到 CSV。请先在本地用 RealiTLScanner 扫描 VPS IP，再通过 SSH 上传到 $REALITYSCAN_DIR/"
-  local report="$REALITYSCAN_DIR/$(basename "${csv_file%.*}")-reality-check.txt" checker_output cleaned
+  local report="$REALITYSCAN_DIR/$(basename "${csv_file%.*}")-reality-check.txt" checker_output cleaned best_line selected best_ms
   echo "========== RealityChecker 批量检测 =========="
   echo "CSV: $csv_file"
   checker_output="$("$checker" csv "$csv_file" 2>&1 || true)"
-  printf '%s\n' "$checker_output" | tee "$report"
-  echo
-  echo "========== 选择 Reality 域名 =========="
-  local -a domains=() csv_domains=()
-  # RealityChecker 的“适合域名”表格第一列为最终域名；去掉 ANSI 颜色和表格边框。
-  cleaned="$(printf '%s\n' "$checker_output" | sed -E $'s/\x1B\[[0-9;]*[[:alpha:]]//g')"
-  mapfile -t domains < <(printf '%s\n' "$cleaned" | awk -F '│' '$2 !~ /最终域名/ && $2 !~ /^[[:space:]-]*$/ && NF >= 3 {gsub(/^[[:space:]]+|[[:space:]]+$/, "", $2); if ($2 ~ /^[A-Za-z0-9.-]+$/) print $2}' | sort -u)
-  if ((${#domains[@]} == 0)); then
-    warn "未能从 RealityChecker 输出解析适合域名，回退到 CSV 的 ORIGIN 列；请人工确认报告"
-    mapfile -t domains < <(awk -F',' 'NR>1 {gsub(/\r/,""); gsub(/^"|"$/,"",$3); if ($3!="") print $3}' "$csv_file" | sort -u)
+  printf '%s\n' "$checker_output" | tee "$report" >/dev/null
+  echo "完整报告: $report"
+  echo "筛选条件: 五颗星、基础条件全绿、证书有效、无明显 CDN/热门标记、页面状态 200/301/302/404"
+  # RealityChecker 表格列：最终域名、基础条件、握手时间、证书时间、CDN、热门、推荐、页面状态。
+  # 只解析五颗星且条件全绿的行，不再把 CSV 的所有域名列出来。
+  cleaned="$(printf '%s\n' "$checker_output" | sed -E $'s/\x1B\[[0-9;]*[[:alpha:]]//g; s/[│┃]/|/g')"
+  best_line="$(printf '%s\n' "$cleaned" | awk -F '|' '
+    NF >= 9 {
+      for (i=1; i<=NF; i++) gsub(/^[[:space:]]+|[[:space:]]+$/, "", $i)
+      domain=$2; basic=$3; hs=$4; cert=$5; cdn=$6; hot=$7; stars=$8; status=$9
+      if (stars != "*****" || basic !~ /✓/ || cert == "无效" || cdn !~ /^(无|-)$/ || hot !~ /^-$/ || status !~ /^(200|301|302|404)$/) next
+      if (match(hs, /[0-9]+/)) print substr(hs, RSTART, RLENGTH) "\t" domain
+    }
+  ' | sort -n -k1,1 | head -1)"
+  if [[ -z "$best_line" ]]; then
+    warn "没有解析到符合条件的五颗星全绿目标；未修改节点配置。请查看完整报告: $report"
+    return 1
   fi
-  ((${#domains[@]} > 0)) || die "未找到可选择的域名"
-  local i choice selected
-  for i in "${!domains[@]}"; do printf '%3d. %s\n' "$((i+1))" "${domains[$i]}"; done
-  while true; do
-    read -r -p "输入编号选择目标，0 取消: " choice
-    [[ "$choice" == 0 ]] && { echo "已取消，不修改节点配置"; return 0; }
-    if [[ "$choice" =~ ^[0-9]+$ ]] && ((choice >= 1 && choice <= ${#domains[@]})); then
-      selected="${domains[$((choice-1))]}"; break
-    fi
-    echo "请输入有效编号"
-  done
+  best_ms="${best_line%%$'\t'*}"
+  selected="${best_line#*$'\t'}"
+  echo "最优五颗星目标: $selected（握手延迟 ${best_ms}ms）"
   apply_reality_sni "$selected"
 }
 
