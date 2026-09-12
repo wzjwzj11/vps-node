@@ -18,7 +18,7 @@ HY2_PORT="${HY2_PORT:-auto}"
 SNI="${SNI:-auto}"                 # auto=从候选伪装站中选择 TCP/443 延迟最低者
 TAG="${TAG:-vps}"
 SB_VER="${SB_VER:-}"              # 留空=自动取最新版
-SCRIPT_VERSION="v1.0.28"
+SCRIPT_VERSION="v1.0.29"
 SCRIPT_URL="https://raw.githubusercontent.com/wzjwzj11/vps-node/${SCRIPT_VERSION}/vps-node.sh"
 SCRIPT_LATEST_URL="https://raw.githubusercontent.com/wzjwzj11/vps-node/main/vps-node.sh"
 ACTION="${ACTION:-menu}"       # menu / install / sb-update / script-update / update / bbr / net-tune / net-reset / speed-test / status / csv-scan / node-info / uninstall
@@ -313,31 +313,46 @@ reality_checker_csv() {
   local csv_file=""
   csv_file="$(find "$REALITYSCAN_DIR" -maxdepth 1 -type f -name '*.csv' -printf '%T@ %p\n' 2>/dev/null | sort -nr | awk 'NR==1{$1=""; sub(/^ /,""); print}')"
   [[ -n "$csv_file" && -r "$csv_file" ]] || die "未找到 CSV。请先在本地用 RealiTLScanner 扫描 VPS IP，再通过 SSH 上传到 $REALITYSCAN_DIR/"
-  local report="$REALITYSCAN_DIR/$(basename "${csv_file%.*}")-reality-check.txt" checker_output cleaned best_line selected best_ms
+  local report="$REALITYSCAN_DIR/$(basename "${csv_file%.*}")-reality-check.txt" checker_output cleaned candidates row
   echo "========== RealityChecker 批量检测 =========="
   echo "CSV: $csv_file"
   checker_output="$("$checker" csv "$csv_file" 2>&1 || true)"
   printf '%s\n' "$checker_output" | tee "$report" >/dev/null
   echo "完整报告: $report"
-  echo "筛选条件: 五颗星、基础条件全绿、证书有效、无明显 CDN/热门标记、页面状态 200/301/302/404"
-  # RealityChecker 表格列：最终域名、基础条件、握手时间、证书时间、CDN、热门、推荐、页面状态。
-  # 只解析五颗星且条件全绿的行，不再把 CSV 的所有域名列出来。
+  echo "筛选条件: *****、基础条件✓、证书有效、CDN=无、热门=-、页面状态=200"
+  # 表格列：最终域名、基础条件、握手时间、证书时间、CDN、热门、推荐、页面状态。
+  # 只保留严格全绿候选；302/404 是可接受状态，但不算全绿，因此排除。
   cleaned="$(printf '%s\n' "$checker_output" | sed -E $'s/\x1B\[[0-9;]*[[:alpha:]]//g; s/[│┃]/|/g')"
-  best_line="$(printf '%s\n' "$cleaned" | awk -F '|' '
+  candidates="$(printf '%s\n' "$cleaned" | awk -F '|' '
     NF >= 9 {
       for (i=1; i<=NF; i++) gsub(/^[[:space:]]+|[[:space:]]+$/, "", $i)
       domain=$2; basic=$3; hs=$4; cert=$5; cdn=$6; hot=$7; stars=$8; status=$9
-      if (stars != "*****" || basic !~ /✓/ || cert == "无效" || cdn !~ /^(无|-)$/ || hot !~ /^-$/ || status !~ /^(200|301|302|404)$/) next
-      if (match(hs, /[0-9]+/)) print substr(hs, RSTART, RLENGTH) "\t" domain
+      if (domain !~ /^[A-Za-z0-9.-]+$/ || stars != "*****" || basic !~ /✓/ || cert == "无效" || cdn != "无" || hot != "-" || status != "200") next
+      if (match(hs, /[0-9]+/)) print substr(hs, RSTART, RLENGTH) "\t" domain "\t" hs "\t" cert "\t" cdn "\t" hot "\t" stars "\t" status
     }
-  ' | sort -n -k1,1 | head -1)"
-  if [[ -z "$best_line" ]]; then
-    warn "没有解析到符合条件的五颗星全绿目标；未修改节点配置。请查看完整报告: $report"
-    return 1
-  fi
-  best_ms="${best_line%%$'\t'*}"
-  selected="${best_line#*$'\t'}"
-  echo "最优五颗星目标: $selected（握手延迟 ${best_ms}ms）"
+  ' | sort -n -k1,1)"
+  [[ -n "$candidates" ]] || { warn "没有符合“五星全绿 + 页面200”的候选；未修改节点配置。完整报告: $report"; return 1; }
+  echo
+  echo "========== 五星全绿候选（按握手延迟排序） =========="
+  printf '%-4s %-38s %-10s %-10s %-8s %-8s %-8s %-8s\n' "编号" "最终域名" "握手" "证书" "CDN" "热门" "推荐" "页面"
+  printf '%-4s %-38s %-10s %-10s %-8s %-8s %-8s %-8s\n' "----" "--------------------------------------" "----------" "----------" "--------" "--------" "--------" "--------"
+  local -a candidate_rows=()
+  mapfile -t candidate_rows <<< "$candidates"
+  local i choice selected
+  for i in "${!candidate_rows[@]}"; do
+    IFS=$'\t' read -r best_ms selected hs cert cdn hot stars status <<< "${candidate_rows[$i]}"
+    printf '%-4s %-38s %-10s %-10s %-8s %-8s %-8s %-8s\n' "$((i+1))" "$selected" "$hs" "$cert" "$cdn" "$hot" "$stars" "$status"
+  done
+  while true; do
+    read -r -p "输入编号选择 Reality 域名，0 取消: " choice
+    [[ "$choice" == 0 ]] && { echo "已取消，不修改节点配置"; return 0; }
+    if [[ "$choice" =~ ^[0-9]+$ ]] && ((choice >= 1 && choice <= ${#candidate_rows[@]})); then
+      IFS=$'\t' read -r best_ms selected hs cert cdn hot stars status <<< "${candidate_rows[$((choice-1))]}"
+      break
+    fi
+    echo "请输入有效编号"
+  done
+  echo "已选择: $selected（握手 $hs）"
   apply_reality_sni "$selected"
 }
 
