@@ -49,9 +49,15 @@ sudo env UUID='你的UUID' VLESS_PORT=443 ANYTLS_PORT=8443 HY2_PORT=auto \
 1. 查看 VPS 基础状态
 2. 更新系统软件包
 3. 开启 BBR
-4. Reality 目标扫描
-5. 安装/重建节点配置
-6. 查询节点信息
+4. 网络参数优化（保守）
+5. 网络测速
+6. CSV Reality 扫描/修改域名
+7. 安装/重建节点配置
+8. 查询节点信息
+9. 更新 sing-box
+10. 更新本机脚本
+11. 恢复网络参数
+12. 卸载 sing-box
 ```
 
 说明：
@@ -59,9 +65,11 @@ sudo env UUID='你的UUID' VLESS_PORT=443 ANYTLS_PORT=8443 HY2_PORT=auto \
 1. 先确认系统、架构、内存、公网 IP、内核和端口情况。
 2. 更新系统软件包，减少旧依赖和安全更新遗漏。
 3. 开启 BBR；如果当前内核不支持，脚本会提示而不会强行更换内核。
-4. 扫描 Reality 候选目标，观察 TLS、ALPN、证书和重复测量延迟。
-5. 安装节点，`SNI=auto` 会重新测量并选择 TLS 握手中位延迟较低的候选目标，HY2 自动选择空闲高位 UDP 端口。
-6. 查询节点信息，复制 VLESS、AnyTLS、Hysteria2 链接，并确认服务和监听端口。
+4. 应用保守网络参数优化（可选）。
+5. 网络测速，了解 VPS 到不同线路的真实下载速度。
+6. 在本地扫描 VPS IP、上传 CSV，在 VPS 上批量检测并选择 Reality 域名。
+7. 安装节点，`SNI=auto` 会重新测量并选择 TLS 握手中位延迟较低的候选目标，HY2 自动选择空闲高位 UDP 端口。
+8. 查询节点信息，复制 VLESS、AnyTLS、Hysteria2 链接，并确认服务和监听端口。
 
 - `4. 网络参数优化（保守）`：在不更换内核、不安装第三方工具的前提下，应用 BBR+FQ、适度 TCP 缓冲区、MTU 探测和 Fast Open
 - `5. 网络测速`：测试多个独立下载地址，显示 HTTP 状态、实际收到字节数和平均下载速度；单个测速站失败不会中断其他测试
@@ -105,9 +113,54 @@ SPEEDTEST_URLS='https://speed.cloudflare.com/__down?bytes=10000000,http://ash-sp
 ```
 
 
-菜单中的 `6. Reality 目标扫描` 会检测候选域名的：
+## CSV Reality 扫描与修改域名
 
-- TCP/443 是否可连接
+新的菜单 `6. CSV Reality 扫描/修改域名` 不再从 VPS 直接扫描 VPS IP。推荐流程是：
+
+1. 在本地 Windows 运行 RealiTLScanner，扫描甲骨文 VPS 的公网 IP；
+2. 生成 CSV；
+3. 通过 SSH/SCP 上传到 VPS；
+4. VPS 自动下载 ARM64 RealityChecker；
+5. 运行 `reality-checker csv` 批量检测；
+6. 选择目标域名；
+7. 备份并修改 VLESS-Reality、AnyTLS-Reality 的 SNI；
+8. 运行 `sing-box check`，重启服务；失败会恢复原配置。
+
+本地工具脚本：
+
+```text
+tools/reality-scan-upload.ps1
+```
+
+在 PowerShell 中运行（`SshTarget` 例如 `root@你的VPS_IP`）：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\reality-scan-upload.ps1 `
+  -VpsIp "你的VPS公网IP" `
+  -SshTarget "root@你的VPS公网IP" `
+  -SshKey "D:\Keys\oracle-vps" `
+  -RunRemoteCheck
+```
+
+如果 VPS 使用密码登录，省略 `-SshKey`：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\reality-scan-upload.ps1 `
+  -VpsIp "你的VPS公网IP" `
+  -SshTarget "root@你的VPS公网IP" `
+  -RunRemoteCheck
+```
+
+CSV 会上传到：
+
+```text
+/root/reality-scan/
+```
+
+甲骨文 ARM VPS 使用 RealityChecker `v2.2.3` 的 `linux-arm64` 版本。修改域名后，UUID、Reality 公钥、Short ID 和密码不变，但旧分享链接中的 SNI 失效；请用菜单 `8. 查询节点信息` 获取新链接。RealityChecker 批量结果会检测 TLS 1.3、X25519、HTTP/2、SNI/证书匹配、CDN 和重定向；只有通过检测的域名才列入选择菜单。
+
+现有的直接候选扫描说明：
+
 - TLS 版本
 - ALPN（优先协商 h2）
 - 证书 CN/Subject
@@ -116,7 +169,7 @@ SPEEDTEST_URLS='https://speed.cloudflare.com/__down?bytes=10000000,http://ash-sp
 默认候选列表不含 `www.cloudflare.com`。也可以自定义：
 
 ```bash
-sudo env REALITY_TARGETS='www.intel.com,aws.amazon.com,www.apple.com,www.microsoft.com' ACTION=scan bash vps-node.sh
+sudo env REALITY_TARGETS='www.intel.com,aws.amazon.com,www.apple.com,www.microsoft.com' ACTION=csv-scan bash vps-node.sh
 ```
 
 扫描器用于筛选 Reality 握手目标，不会修改现有配置。最终是否适合作为 Reality 目标，还应确认目标支持 TLS 1.3、HTTP/2，并由 VPS 到目标的实际网络路径决定。

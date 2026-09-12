@@ -18,11 +18,12 @@ HY2_PORT="${HY2_PORT:-auto}"
 SNI="${SNI:-auto}"                 # auto=从候选伪装站中选择 TCP/443 延迟最低者
 TAG="${TAG:-vps}"
 SB_VER="${SB_VER:-}"              # 留空=自动取最新版
-SCRIPT_VERSION="v1.0.23"
+SCRIPT_VERSION="v1.0.25"
 SCRIPT_URL="https://raw.githubusercontent.com/wzjwzj11/vps-node/${SCRIPT_VERSION}/vps-node.sh"
 SCRIPT_LATEST_URL="https://raw.githubusercontent.com/wzjwzj11/vps-node/main/vps-node.sh"
-ACTION="${ACTION:-menu}"       # menu / install / sb-update / script-update / update / bbr / net-tune / net-reset / speed-test / status / scan / node-info / uninstall
-SPEEDTEST_URLS="${SPEEDTEST_URLS:-https://speed.cloudflare.com/__down?bytes=10000000,http://ash-speed.hetzner.com/100MB.bin,https://cachefly.cachefly.net/10mb.test}"
+ACTION="${ACTION:-menu}"       # menu / install / sb-update / script-update / update / bbr / net-tune / net-reset / speed-test / status / csv-scan / node-info / uninstall
+REALITYCHECKER_VERSION="${REALITYCHECKER_VERSION:-v2.2.3}"
+REALITYSCAN_DIR="${REALITYSCAN_DIR:-/root/reality-scan}"
 REALITY_TARGETS="${REALITY_TARGETS:-gateway.icloud.com,swdist.apple.com,addons.mozilla.org,www.microsoft.com,dl.google.com,images.unsplash.com,www.amazon.co.jp,yahoo.co.jp,www.intel.com,aws.amazon.com,www.amazon.com,www.samsung.com,www.amd.com,www.sony.com,www.nvidia.com,www.apple.com,www.google.com,www.bing.com,www.yahoo.com}"
 # ====================================
 
@@ -289,6 +290,80 @@ speed_test() {
   done
 }
 
+reality_checker_csv() {
+  command -v curl >/dev/null 2>&1 || die "CSV 检测需要 curl"
+  command -v unzip >/dev/null 2>&1 || die "CSV 检测需要 unzip"
+  mkdir -p "$REALITYSCAN_DIR"
+  local checker="$REALITYSCAN_DIR/reality-checker"
+  if [[ ! -x "$checker" ]]; then
+    info "下载 RealityChecker ${REALITYCHECKER_VERSION} ARM64..."
+    local zip="$REALITYSCAN_DIR/reality-checker.zip"
+    curl -fL --retry 3 -o "$zip" "https://github.com/V2RaySSR/RealityChecker/releases/download/${REALITYCHECKER_VERSION}/reality-checker-linux-arm64.zip" || die "RealityChecker 下载失败"
+    unzip -o "$zip" -d "$REALITYSCAN_DIR" >/dev/null || die "RealityChecker 解压失败"
+    chmod 755 "$checker"
+    rm -f "$zip"
+  fi
+  local csv_file=""
+  csv_file="$(find "$REALITYSCAN_DIR" -maxdepth 1 -type f -name '*.csv' -printf '%T@ %p\n' 2>/dev/null | sort -nr | awk 'NR==1{$1=""; sub(/^ /,""); print}')"
+  [[ -n "$csv_file" && -r "$csv_file" ]] || die "未找到 CSV。请先在本地用 RealiTLScanner 扫描 VPS IP，再通过 SSH 上传到 $REALITYSCAN_DIR/"
+  local report="$REALITYSCAN_DIR/$(basename "${csv_file%.*}")-reality-check.txt" checker_output cleaned
+  echo "========== RealityChecker 批量检测 =========="
+  echo "CSV: $csv_file"
+  checker_output="$("$checker" csv "$csv_file" 2>&1 || true)"
+  printf '%s\n' "$checker_output" | tee "$report"
+  echo
+  echo "========== 选择 Reality 域名 =========="
+  local -a domains=() csv_domains=()
+  # RealityChecker 的“适合域名”表格第一列为最终域名；去掉 ANSI 颜色和表格边框。
+  cleaned="$(printf '%s\n' "$checker_output" | sed -E $'s/\x1B\[[0-9;]*[[:alpha:]]//g')"
+  mapfile -t domains < <(printf '%s\n' "$cleaned" | awk -F '│' '$2 !~ /最终域名/ && $2 !~ /^[[:space:]-]*$/ && NF >= 3 {gsub(/^[[:space:]]+|[[:space:]]+$/, "", $2); if ($2 ~ /^[A-Za-z0-9.-]+$/) print $2}' | sort -u)
+  if ((${#domains[@]} == 0)); then
+    warn "未能从 RealityChecker 输出解析适合域名，回退到 CSV 的 ORIGIN 列；请人工确认报告"
+    mapfile -t domains < <(awk -F',' 'NR>1 {gsub(/\r/,""); gsub(/^"|"$/,"",$2); if ($2!="") print $2}' "$csv_file" | sort -u)
+  fi
+  ((${#domains[@]} > 0)) || die "未找到可选择的域名"
+  local i choice selected
+  for i in "${!domains[@]}"; do printf '%3d. %s\n' "$((i+1))" "${domains[$i]}"; done
+  while true; do
+    read -r -p "输入编号选择目标，0 取消: " choice
+    [[ "$choice" == 0 ]] && { echo "已取消，不修改节点配置"; return 0; }
+    if [[ "$choice" =~ ^[0-9]+$ ]] && ((choice >= 1 && choice <= ${#domains[@]})); then
+      selected="${domains[$((choice-1))]}"; break
+    fi
+    echo "请输入有效编号"
+  done
+  apply_reality_sni "$selected"
+}
+
+apply_reality_sni() {
+  local selected="$1" conf=/etc/sing-box/config.json backup old_sni info_file
+  [[ "$selected" =~ ^[A-Za-z0-9.-]+$ ]] || die "域名格式无效: $selected"
+  [[ -s "$conf" ]] || die "未找到 $conf，请先安装节点"
+  command -v jq >/dev/null 2>&1 || die "修改配置需要 jq"
+  backup="${conf}.bak.$(date +%Y%m%d%H%M%S)"
+  old_sni="$(jq -r '[.inbounds[] | select((.type=="vless" or .type=="anytls") and .tls.reality.enabled==true) | .tls.server_name][0] // empty' "$conf")"
+  [[ -n "$old_sni" ]] || die "配置中没有 VLESS/AnyTLS Reality 入站"
+  cp -a "$conf" "$backup"
+  local tmp="$(mktemp /tmp/vps-node-config.XXXXXX.json)"
+  jq --arg sni "$selected" '.inbounds |= map(if ((.type=="vless" or .type=="anytls") and .tls.reality.enabled==true) then (.tls.server_name=$sni | .tls.reality.handshake.server=$sni) else . end)' "$conf" > "$tmp" || { rm -f "$tmp"; die "生成新配置失败，原配置未修改"; }
+  install -m 600 "$tmp" "$conf"
+  rm -f "$tmp"
+  if ! sing-box check -c "$conf"; then
+    cp -a "$backup" "$conf"; rm -f "$backup"
+    die "新配置校验失败，已恢复原配置"
+  fi
+  systemctl restart sing-box
+  if ! systemctl is-active --quiet sing-box; then
+    cp -a "$backup" "$conf"; systemctl restart sing-box; rm -f "$backup"
+    die "重启 sing-box 失败，已恢复原配置"
+  fi
+  info_file="$(find /root -maxdepth 1 -type f -name 'node_info_*.txt' -printf '%T@ %p\n' 2>/dev/null | sort -nr | awk 'NR==1{$1=""; sub(/^ /,""); print}')"
+  if [[ -n "$info_file" && -w "$info_file" ]]; then sed -i "s|$old_sni|$selected|g" "$info_file"; fi
+  rm -f "$backup"
+  ok "Reality 域名已修改: $old_sni -> $selected"
+  ok "VLESS 和 AnyTLS 已重启生效；新的节点链接可用菜单查询节点信息获取"
+}
+
 show_status() {
   echo "========== VPS 节点状态 =========="
   . /etc/os-release 2>/dev/null || true
@@ -371,7 +446,7 @@ if [[ "$ACTION" == "menu" ]]; then
     echo "3. 开启 BBR"
     echo "4. 网络参数优化（保守）"
     echo "5. 网络测速"
-    echo "6. Reality 目标扫描"
+    echo "6. CSV Reality 扫描/修改域名"
     echo "7. 安装/重建节点配置"
     echo "8. 查询节点信息"
     echo "9. 更新 sing-box"
@@ -386,7 +461,7 @@ if [[ "$ACTION" == "menu" ]]; then
       3) ACTION=bbr; break ;;
       4) ACTION=net-tune; break ;;
       5) ACTION=speed-test; break ;;
-      6) ACTION=scan; break ;;
+      6) ACTION=csv-scan; break ;;
       7) ACTION=install; break ;;
       8) ACTION=node-info; break ;;
       9) ACTION=sb-update; SB_VER=""; break ;;
@@ -413,8 +488,8 @@ case "$ACTION" in
     show_status; exit 0 ;;
   speed-test)
     speed_test; exit 0 ;;
-  scan)
-    scan_reality_targets; exit 0 ;;
+  csv-scan)
+    reality_checker_csv; exit 0 ;;
   node-info)
     show_node_info; exit 0 ;;
   script-update)
@@ -435,7 +510,7 @@ case "$ACTION" in
     systemctl daemon-reload
     echo "sing-box 已卸载（不会删除系统包和防火墙规则）"; exit 0 ;;
   install|sb-update|script-update|node-info) ;;
-  *) die "ACTION 只能是 menu/install/sb-update/script-update/update/bbr/net-tune/net-reset/speed-test/status/scan/node-info/uninstall" ;;
+  *) die "ACTION 只能是 menu/install/sb-update/script-update/update/bbr/net-tune/net-reset/speed-test/status/csv-scan/node-info/uninstall" ;;
 esac
 
 
