@@ -19,7 +19,7 @@ SUB_PORT="${SUB_PORT:-2096}"
 SNI="${SNI:-auto}"                 # auto=从候选伪装站中选择 TCP/443 延迟最低者
 TAG="${TAG:-vps}"
 SB_VER="${SB_VER:-}"              # 留空=自动取最新版
-SCRIPT_VERSION="v1.0.32"
+SCRIPT_VERSION="v1.0.33"
 SCRIPT_URL="https://raw.githubusercontent.com/wzjwzj11/vps-node/${SCRIPT_VERSION}/vps-node.sh"
 SCRIPT_LATEST_URL="https://raw.githubusercontent.com/wzjwzj11/vps-node/main/vps-node.sh"
 ACTION="${ACTION:-menu}"       # menu / install / sb-update / script-update / update / bbr / net-tune / net-reset / speed-test / status / csv-scan / node-info / uninstall
@@ -327,12 +327,27 @@ reality_checker_csv() {
   command -v unzip >/dev/null 2>&1 || die "CSV 检测需要 unzip"
   mkdir -p "$REALITYSCAN_DIR"
   local checker="$REALITYSCAN_DIR/reality-checker"
-  if [[ ! -x "$checker" ]]; then
-    info "下载 RealityChecker ${REALITYCHECKER_VERSION} ARM64..."
+  local rc_arch=""
+  case "$(uname -m)" in
+    x86_64|amd64)  rc_arch="amd64" ;;
+    aarch64|arm64) rc_arch="arm64" ;;
+    *) die "RealityChecker 不支持当前系统架构: $(uname -m)" ;;
+  esac
+
+  local arch_marker="$REALITYSCAN_DIR/.arch"
+  local need_download=0
+  if [[ ! -x "$checker" ]] || [[ ! -f "$arch_marker" ]] || [[ "$(< "$arch_marker")" != "$rc_arch" ]]; then
+    need_download=1
+  fi
+
+  if ((need_download == 1)); then
+    info "下载 RealityChecker ${REALITYCHECKER_VERSION} (Linux-${rc_arch})..."
     local zip="$REALITYSCAN_DIR/reality-checker.zip"
-    curl -fL --retry 3 -o "$zip" "https://github.com/V2RaySSR/RealityChecker/releases/download/${REALITYCHECKER_VERSION}/reality-checker-linux-arm64.zip" || die "RealityChecker 下载失败"
+    rm -f "$checker" "$zip"
+    curl -fL --retry 3 -o "$zip" "https://github.com/V2RaySSR/RealityChecker/releases/download/${REALITYCHECKER_VERSION}/reality-checker-linux-${rc_arch}.zip" || die "RealityChecker 下载失败"
     unzip -o "$zip" -d "$REALITYSCAN_DIR" >/dev/null || die "RealityChecker 解压失败"
     chmod 755 "$checker"
+    echo "$rc_arch" > "$arch_marker"
     rm -f "$zip"
   fi
   local csv_file=""
@@ -348,11 +363,11 @@ reality_checker_csv() {
   # 表格列：最终域名、基础条件、握手时间、证书时间、CDN、热门、推荐、页面状态。
   # 只保留严格全绿候选；302/404 是可接受状态，但不算全绿，因此排除。
   cleaned="$(printf '%s\n' "$checker_output" | sed -E $'s/\x1B\[[0-9;]*[[:alpha:]]//g; s/[│┃]/|/g')"
-  candidates="$(printf '%s\n' "$cleaned" | awk -F '|' '
+  candidates="$(printf '%s\n' "$cleaned" | LC_ALL=C.UTF-8 awk -F '|' '
     NF >= 9 {
       for (i=1; i<=NF; i++) gsub(/^[[:space:]]+|[[:space:]]+$/, "", $i)
       domain=$2; basic=$3; hs=$4; cert=$5; cdn=$6; hot=$7; stars=$8; status=$9
-      if (domain !~ /^[A-Za-z0-9.-]+$/ || stars != "*****" || basic !~ /✓/ || cert == "无效" || cdn != "无" || hot != "-" || status != "200") next
+      if (domain !~ /^[A-Za-z0-9.-]+$/ || stars != "*****" || (basic !~ /✓/ && basic !~ /√/) || cert == "无效" || cdn != "无" || hot != "-" || status != "200") next
       if (match(hs, /[0-9]+/)) print substr(hs, RSTART, RLENGTH) "\t" domain "\t" hs "\t" cert "\t" cdn "\t" hot "\t" stars "\t" status
     }
   ' | sort -n -k1,1)"
