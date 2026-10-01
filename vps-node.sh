@@ -19,10 +19,10 @@ SUB_PORT="${SUB_PORT:-2096}"
 SNI="${SNI:-auto}"                 # auto=从候选伪装站中选择 TCP/443 延迟最低者
 TAG="${TAG:-vps}"
 SB_VER="${SB_VER:-}"              # 留空=自动取最新版
-SCRIPT_VERSION="v1.0.34"
+SCRIPT_VERSION="v1.0.35"
 SCRIPT_URL="https://raw.githubusercontent.com/wzjwzj11/vps-node/${SCRIPT_VERSION}/vps-node.sh"
 SCRIPT_LATEST_URL="https://raw.githubusercontent.com/wzjwzj11/vps-node/main/vps-node.sh"
-ACTION="${ACTION:-menu}"       # menu / install / sb-update / script-update / update / bbr / net-tune / net-reset / speed-test / status / csv-scan / node-info / uninstall
+ACTION="${ACTION:-menu}"       # menu / install / sb-update / script-update / update / bbr / net-tune / net-reset / speed-test / trace-route / status / csv-scan / node-info / uninstall
 REALITYCHECKER_VERSION="${REALITYCHECKER_VERSION:-v2.2.3}"
 REALITYSCAN_DIR="${REALITYSCAN_DIR:-/root/reality-scan}"
 SNI_FILE="/etc/sing-box/reality_sni"
@@ -314,6 +314,63 @@ speed_test() {
       printf '%-32s %-8s %-14s %-18s %s\n' "$name" "-" "0 bytes" "-" "$error"
     fi
   done
+}
+
+trace_route() {
+  local target_ip="" detected_ip="" input_target=""
+  if [[ -n "${SSH_CLIENT:-}" ]]; then
+    detected_ip="$(awk '{print $1}' <<< "$SSH_CLIENT")"
+  elif [[ -n "${SSH_CONNECTION:-}" ]]; then
+    detected_ip="$(awk '{print $1}' <<< "$SSH_CONNECTION")"
+  fi
+  if [[ -z "$detected_ip" ]] && command -v who >/dev/null 2>&1; then
+    detected_ip="$(who -m 2>/dev/null | awk '{print $NF}' | tr -d '()' || true)"
+  fi
+  if [[ ! "$detected_ip" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || [[ "$detected_ip" =~ ^127\. ]]; then
+    detected_ip=""
+  fi
+
+  echo "========== VPS 回程路由测试 (NextTrace) =========="
+  if [[ -n "$detected_ip" ]]; then
+    echo "已自动识别当前客户端/宽带公网 IP: $detected_ip"
+    read -r -p "直接按回车测试该 IP，或输入其他目标 IP/域名: " input_target
+    target_ip="${input_target:-$detected_ip}"
+  else
+    read -r -p "未能自动检测到客户端 IP，请输入目标 IP 或域名: " input_target
+    target_ip="$input_target"
+  fi
+  [[ -n "$target_ip" ]] || { warn "未输入有效目标，已取消测试"; return 0; }
+
+  if ! command -v nexttrace >/dev/null 2>&1; then
+    info "未检测到 NextTrace，正在安装官方版本..."
+    local nt_arch=""
+    case "$(uname -m)" in
+      x86_64|amd64)  nt_arch="amd64" ;;
+      aarch64|arm64) nt_arch="arm64" ;;
+      armv7l)        nt_arch="armv7" ;;
+      *)             nt_arch="" ;;
+    esac
+    local installed=0
+    if [[ -n "$nt_arch" ]]; then
+      local tmp_nt="$(mktemp /tmp/nexttrace.XXXXXX)"
+      if curl -fSL --retry 3 --connect-timeout 10 "https://github.com/nxtrace/NTrace-core/releases/latest/download/nexttrace_linux_${nt_arch}" -o "$tmp_nt"; then
+        install -m 755 "$tmp_nt" /usr/local/bin/nexttrace
+        rm -f "$tmp_nt"
+        installed=1
+      else
+        rm -f "$tmp_nt"
+      fi
+    fi
+    if ((installed == 0)); then
+      info "尝试通过官方安装脚本安装 NextTrace..."
+      curl -fsSL https://raw.githubusercontent.com/sjlleo/nexttrace/main/nt_install.sh | bash || curl -fsSL https://nxtrace.org/nt | bash || die "NextTrace 安装失败"
+    fi
+  fi
+  command -v nexttrace >/dev/null 2>&1 || die "NextTrace 未能安装成功"
+
+  echo
+  info "正在测试 VPS 到 $target_ip 的回程路由 (TCP SYN 模式)..."
+  nexttrace -T "$target_ip" || nexttrace "$target_ip"
 }
 
 reality_checker_csv() {
@@ -625,13 +682,14 @@ if [[ "$ACTION" == "menu" ]]; then
     echo "3. 开启 BBR"
     echo "4. 网络参数优化（保守）"
     echo "5. 网络测速"
-    echo "6. CSV Reality 扫描/修改域名"
-    echo "7. 安装/重建节点配置"
-    echo "8. 查询节点信息"
-    echo "9. 更新 sing-box"
-    echo "10. 更新本机脚本"
-    echo "11. 恢复网络参数"
-    echo "12. 卸载 sing-box"
+    echo "6. 回程路由测试 (NextTrace)"
+    echo "7. CSV Reality 扫描/修改域名"
+    echo "8. 安装/重建节点配置"
+    echo "9. 查询节点信息"
+    echo "10. 更新 sing-box"
+    echo "11. 更新本机脚本"
+    echo "12. 恢复网络参数"
+    echo "13. 卸载 sing-box"
     echo "0. 退出"
     read -r -p "请选择: " choice
     case "$choice" in
@@ -640,13 +698,14 @@ if [[ "$ACTION" == "menu" ]]; then
       3) ACTION=bbr; break ;;
       4) ACTION=net-tune; break ;;
       5) ACTION=speed-test; break ;;
-      6) ACTION=csv-scan; break ;;
-      7) ACTION=install; break ;;
-      8) ACTION=node-info; break ;;
-      9) ACTION=sb-update; SB_VER=""; break ;;
-      10) ACTION=script-update; break ;;
-      11) ACTION=net-reset; break ;;
-      12) ACTION=uninstall; break ;;
+      6) ACTION=trace-route; break ;;
+      7) ACTION=csv-scan; break ;;
+      8) ACTION=install; break ;;
+      9) ACTION=node-info; break ;;
+      10) ACTION=sb-update; SB_VER=""; break ;;
+      11) ACTION=script-update; break ;;
+      12) ACTION=net-reset; break ;;
+      13) ACTION=uninstall; break ;;
       0) exit 0 ;;
       *) echo "无效选择" ;;
     esac
@@ -667,6 +726,8 @@ case "$ACTION" in
     show_status; exit 0 ;;
   speed-test)
     speed_test; exit 0 ;;
+  trace-route|trace)
+    trace_route; exit 0 ;;
   csv-scan)
     reality_checker_csv; exit 0 ;;
   node-info)
@@ -693,7 +754,7 @@ case "$ACTION" in
     systemctl daemon-reload
     echo "sing-box 已卸载（不会删除系统包和防火墙规则）"; exit 0 ;;
   install|sb-update|script-update|node-info) ;;
-  *) die "ACTION 只能是 menu/install/sb-update/script-update/update/bbr/net-tune/net-reset/speed-test/status/csv-scan/node-info/uninstall" ;;
+  *) die "ACTION 只能是 menu/install/sb-update/script-update/update/bbr/net-tune/net-reset/speed-test/trace-route/status/csv-scan/node-info/uninstall" ;;
 esac
 
 
