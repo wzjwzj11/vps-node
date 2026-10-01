@@ -19,7 +19,7 @@ SUB_PORT="${SUB_PORT:-2096}"
 SNI="${SNI:-auto}"                 # auto=从候选伪装站中选择 TCP/443 延迟最低者
 TAG="${TAG:-vps}"
 SB_VER="${SB_VER:-}"              # 留空=自动取最新版
-SCRIPT_VERSION="v1.0.33"
+SCRIPT_VERSION="v1.0.34"
 SCRIPT_URL="https://raw.githubusercontent.com/wzjwzj11/vps-node/${SCRIPT_VERSION}/vps-node.sh"
 SCRIPT_LATEST_URL="https://raw.githubusercontent.com/wzjwzj11/vps-node/main/vps-node.sh"
 ACTION="${ACTION:-menu}"       # menu / install / sb-update / script-update / update / bbr / net-tune / net-reset / speed-test / status / csv-scan / node-info / uninstall
@@ -30,6 +30,7 @@ SUB_DIR="/var/lib/vps-node/subscription"
 SUB_PORT="${SUB_PORT:-2096}"
 SUB_SERVICE="vps-node-subscription.service"
 REALITY_TARGETS="${REALITY_TARGETS:-gateway.icloud.com,swdist.apple.com,addons.mozilla.org,www.microsoft.com,dl.google.com,images.unsplash.com,www.amazon.co.jp,yahoo.co.jp,www.intel.com,aws.amazon.com,www.amazon.com,www.samsung.com,www.amd.com,www.sony.com,www.nvidia.com,www.apple.com,www.google.com,www.bing.com,www.yahoo.com}"
+SPEEDTEST_URLS="${SPEEDTEST_URLS:-https://speed.cloudflare.com/__down?bytes=100000000,https://ash-speed.hetzner.com/100MB.bin}"
 # ====================================
 
 RED=$'\033[31m'; GRN=$'\033[32m'; YLW=$'\033[33m'; CYN=$'\033[36m'; NC=$'\033[0m'
@@ -284,7 +285,7 @@ show_node_info() {
 }
 
 speed_test() {
-  local urls="$SPEEDTEST_URLS" url name code size speed time_total error
+  local urls="${SPEEDTEST_URLS:-https://speed.cloudflare.com/__down?bytes=100000000,https://ash-speed.hetzner.com/100MB.bin}" url name code size speed time_total error
   local -a url_list=()
   command -v curl >/dev/null 2>&1 || die "测速需要 curl"
   IFS=',' read -ra url_list <<< "$urls"
