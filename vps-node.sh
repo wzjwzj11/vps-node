@@ -19,7 +19,7 @@ SUB_PORT="${SUB_PORT:-2096}"
 SNI="${SNI:-auto}"                 # auto=从候选伪装站中选择 TCP/443 延迟最低者
 TAG="${TAG:-vps}"
 SB_VER="${SB_VER:-}"              # 留空=自动取最新版
-SCRIPT_VERSION="v1.0.31"
+SCRIPT_VERSION="v1.0.32"
 SCRIPT_URL="https://raw.githubusercontent.com/wzjwzj11/vps-node/${SCRIPT_VERSION}/vps-node.sh"
 SCRIPT_LATEST_URL="https://raw.githubusercontent.com/wzjwzj11/vps-node/main/vps-node.sh"
 ACTION="${ACTION:-menu}"       # menu / install / sb-update / script-update / update / bbr / net-tune / net-reset / speed-test / status / csv-scan / node-info / uninstall
@@ -217,10 +217,18 @@ network_reset() {
 
 enable_bbr() {
   command -v sysctl >/dev/null 2>&1 || { die "缺少 sysctl"; return 1; }
+  # 许多发行版 (Debian/Ubuntu/CentOS等) 的 BBR 是以内核模块形式存在的，需显式加载
+  modprobe tcp_bbr 2>/dev/null || /sbin/modprobe tcp_bbr 2>/dev/null || /usr/sbin/modprobe tcp_bbr 2>/dev/null || true
+  modprobe sch_fq 2>/dev/null || /sbin/modprobe sch_fq 2>/dev/null || /usr/sbin/modprobe sch_fq 2>/dev/null || true
   [[ -r /proc/sys/net/ipv4/tcp_available_congestion_control ]] || { die "系统不支持读取 TCP 拥塞控制算法"; return 1; }
   if ! grep -qw bbr /proc/sys/net/ipv4/tcp_available_congestion_control; then
-    die "当前 Linux 内核不支持 BBR；请升级到支持 BBR 的内核后重试"
+    local kver="$(uname -r 2>/dev/null || echo '未知')"
+    die "当前 Linux 内核 ($kver) 不支持 BBR；请检查是否为 OpenVZ/LXC 容器或内核版本低于 4.9"
     return 1
+  fi
+  # 持久化模块加载（防止重启后模块未加载）
+  if [[ -d /etc/modules-load.d ]]; then
+    echo "tcp_bbr" > /etc/modules-load.d/bbr.conf 2>/dev/null || true
   fi
   local conf=/etc/sysctl.d/99-vps-node-bbr.conf
   install -d -m 755 /etc/sysctl.d || { die "无法创建 /etc/sysctl.d"; return 1; }
@@ -877,10 +885,7 @@ else
 fi
 
 if ! sysctl net.ipv4.tcp_congestion_control 2>/dev/null | grep -q bbr; then
-  if [[ -w /etc/sysctl.conf ]] && grep -q "bbr" /proc/sys/net/ipv4/tcp_available_congestion_control 2>/dev/null; then
-    { echo "net.core.default_qdisc=fq"; echo "net.ipv4.tcp_congestion_control=bbr"; } >> /etc/sysctl.conf
-    sysctl -p >/dev/null 2>&1 && ok "已开启 BBR" || warn "BBR 开启失败(可忽略)"
-  fi
+  enable_bbr >/dev/null 2>&1 || true
 fi
 
 # ---------- 6. 输出节点信息 ----------
