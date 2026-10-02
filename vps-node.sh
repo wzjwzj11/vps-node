@@ -19,7 +19,7 @@ SUB_PORT="${SUB_PORT:-2096}"
 SNI="${SNI:-auto}"                 # auto=从候选伪装站中选择 TCP/443 延迟最低者
 TAG="${TAG:-vps}"
 SB_VER="${SB_VER:-}"              # 留空=自动取最新版
-SCRIPT_VERSION="v1.0.36"
+SCRIPT_VERSION="v1.0.37"
 SCRIPT_URL="https://raw.githubusercontent.com/wzjwzj11/vps-node/${SCRIPT_VERSION}/vps-node.sh"
 SCRIPT_LATEST_URL="https://raw.githubusercontent.com/wzjwzj11/vps-node/main/vps-node.sh"
 ACTION="${ACTION:-menu}"       # menu / install / sb-update / script-update / update / bbr / net-tune / net-reset / speed-test / trace-route / ip-check / status / csv-scan / node-info / uninstall
@@ -658,6 +658,42 @@ EOF
   chmod 755 /usr/local/bin/sb
   ok "脚本已更新: $current -> $new_version"
   ok "以后输入 sb 将运行本地新版脚本"
+  ok "正在重新载入新版脚本..."
+  exec bash /usr/local/bin/vps-node.sh
+}
+
+update_system() {
+  info "正在更新系统软件包..."
+  if command -v apt-get >/dev/null; then apt-get update && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y
+  elif command -v dnf >/dev/null; then dnf upgrade -y
+  elif command -v yum >/dev/null; then yum update -y
+  elif command -v apk >/dev/null; then apk update && apk upgrade
+  else die "未识别的包管理器"; fi
+  systemctl restart sing-box 2>/dev/null || true
+  ok "系统更新完成"
+}
+
+uninstall_singbox() {
+  info "正在卸载 sing-box 及订阅服务..."
+  systemctl disable --now "$SUB_SERVICE" 2>/dev/null || true
+  rm -f "/etc/systemd/system/$SUB_SERVICE" /usr/local/libexec/vps-node-subscription.py
+  rm -rf "$SUB_DIR"
+  systemctl daemon-reload
+  systemctl disable --now sing-box 2>/dev/null || true
+  rm -f /usr/local/bin/sing-box /etc/systemd/system/sing-box.service
+  rm -rf /etc/sing-box
+  systemctl daemon-reload
+  ok "sing-box 已卸载（不会删除系统包和防火墙规则）"
+}
+
+pause_and_return() {
+  echo
+  local key=""
+  read -r -p "按回车键返回主菜单，输入 0 退出: " key
+  if [[ "$key" == "0" ]]; then
+    echo "已退出管理脚本"
+    exit 0
+  fi
 }
 
 create_shortcut() {
@@ -690,96 +726,9 @@ EOF
 
 create_shortcut
 
-if [[ "$ACTION" == "menu" ]]; then
-  while true; do
-    echo
-    echo "========== VPS 节点管理 =========="
-    echo "1. 查看 VPS 基础状态"
-    echo "2. 更新系统软件包"
-    echo "3. 开启 BBR"
-    echo "4. 网络参数优化（保守）"
-    echo "5. 网络测速"
-    echo "6. 回程路由测试 (NextTrace)"
-    echo "7. IP 质量体检 (IPQuality)"
-    echo "8. CSV Reality 扫描/修改域名"
-    echo "9. 安装/重建节点配置"
-    echo "10. 查询节点信息"
-    echo "11. 更新 sing-box"
-    echo "12. 更新本机脚本"
-    echo "13. 恢复网络参数"
-    echo "14. 卸载 sing-box"
-    echo "0. 退出"
-    read -r -p "请选择: " choice
-    case "$choice" in
-      1) ACTION=status; break ;;
-      2) ACTION=update; break ;;
-      3) ACTION=bbr; break ;;
-      4) ACTION=net-tune; break ;;
-      5) ACTION=speed-test; break ;;
-      6) ACTION=trace-route; break ;;
-      7) ACTION=ip-check; break ;;
-      8) ACTION=csv-scan; break ;;
-      9) ACTION=install; break ;;
-      10) ACTION=node-info; break ;;
-      11) ACTION=sb-update; SB_VER=""; break ;;
-      12) ACTION=script-update; break ;;
-      13) ACTION=net-reset; break ;;
-      14) ACTION=uninstall; break ;;
-      0) exit 0 ;;
-      *) echo "无效选择" ;;
-    esac
-  done
-fi
-
-# 管理动作：不重建节点配置
-case "$ACTION" in
-  update)
-    if command -v apt-get >/dev/null; then apt-get update && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y
-    elif command -v dnf >/dev/null; then dnf upgrade -y
-    elif command -v yum >/dev/null; then yum update -y
-    elif command -v apk >/dev/null; then apk update && apk upgrade
-    else die "未识别的包管理器"; fi
-    systemctl restart sing-box 2>/dev/null || true
-    echo "系统更新完成；sing-box 若需更新请执行 ACTION=sb-update bash $0"; exit 0 ;;
-  status)
-    show_status; exit 0 ;;
-  speed-test)
-    speed_test; exit 0 ;;
-  trace-route|trace)
-    trace_route; exit 0 ;;
-  ip-check|ipquality)
-    check_ip_quality; exit 0 ;;
-  csv-scan)
-    reality_checker_csv; exit 0 ;;
-  node-info)
-    show_node_info; exit 0 ;;
-  script-update)
-    update_script; exit 0 ;;
-  sb-update)
-    # 继续执行下方官方二进制更新流程
-    ;;
-  bbr)
-    enable_bbr; exit 0 ;;
-  net-tune)
-    network_tune; exit 0 ;;
-  net-reset)
-    network_reset; exit 0 ;;
-  uninstall)
-    systemctl disable --now "$SUB_SERVICE" 2>/dev/null || true
-    rm -f "/etc/systemd/system/$SUB_SERVICE" /usr/local/libexec/vps-node-subscription.py
-    rm -rf "$SUB_DIR"
-    systemctl daemon-reload
-    systemctl disable --now sing-box 2>/dev/null || true
-    rm -f /usr/local/bin/sing-box /etc/systemd/system/sing-box.service
-    rm -rf /etc/sing-box
-    systemctl daemon-reload
-    echo "sing-box 已卸载（不会删除系统包和防火墙规则）"; exit 0 ;;
-  install|sb-update|script-update|node-info) ;;
-  *) die "ACTION 只能是 menu/install/sb-update/script-update/update/bbr/net-tune/net-reset/speed-test/trace-route/ip-check/status/csv-scan/node-info/uninstall" ;;
-esac
-
-
-ARCH="$(uname -m)"
+install_singbox() {
+  local target_action="${1:-install}"
+  ARCH="$(uname -m)"
 case "$ARCH" in
   x86_64|amd64)  SB_ARCH="amd64" ;;
   aarch64|arm64) SB_ARCH="arm64" ;;
@@ -847,13 +796,13 @@ else
   ok "已安装到 $INSTALL_DIR/sing-box"
 fi
 sing-box version
-if [[ "$ACTION" == "sb-update" ]]; then
+if [[ "$target_action" == "sb-update" ]]; then
   [[ -s "$CONF_DIR/config.json" ]] || die "未找到现有配置，请先执行 ACTION=install"
   sing-box check -c "$CONF_DIR/config.json" || die "现有配置与此 sing-box 版本不兼容，未重启服务"
   systemctl restart sing-box
   systemctl is-active --quiet sing-box || die "sing-box 更新后启动失败，请查看 journalctl -u sing-box"
   ok "sing-box 已更新，原有 UUID、密钥、端口和配置保持不变"
-  exit 0
+  return 0
 fi
 
 # ---------- 2. 生成密钥 ----------
@@ -1025,8 +974,69 @@ INFO_FILE="/root/node_info_$(date +%Y%m%d).txt"
 chmod 600 "$INFO_FILE"
 
 echo
-ok "全部完成！节点信息已保存到 $INFO_FILE"
-warn "VLESS-Reality 用 v2rayN(sing-box/xray内核均可)；Hysteria2 必须切 sing-box 内核。"
-warn "升级: SB_VER= 留空重跑本脚本即升级到最新版; 卸载: systemctl disable --now sing-box && rm -rf /usr/local/bin/sing-box /etc/sing-box /etc/systemd/system/sing-box.service"
-echo "安装脚本已结束，返回 Shell。"
-exit 0
+  ok "全部完成！节点信息已保存到 $INFO_FILE"
+  warn "VLESS-Reality 用 v2rayN(sing-box/xray内核均可)；Hysteria2 必须切 sing-box 内核。"
+  warn "升级: SB_VER= 留空重跑本脚本即升级到最新版; 卸载: systemctl disable --now sing-box && rm -rf /usr/local/bin/sing-box /etc/sing-box /etc/systemd/system/sing-box.service"
+  return 0
+}
+
+if [[ "$ACTION" == "menu" ]]; then
+  while true; do
+    echo
+    echo "========== VPS 节点管理 =========="
+    echo "1. 查看 VPS 基础状态"
+    echo "2. 更新系统软件包"
+    echo "3. 开启 BBR"
+    echo "4. 网络参数优化（保守）"
+    echo "5. 网络测速"
+    echo "6. 回程路由测试 (NextTrace)"
+    echo "7. IP 质量体检 (IPQuality)"
+    echo "8. CSV Reality 扫描/修改域名"
+    echo "9. 安装/重建节点配置"
+    echo "10. 查询节点信息"
+    echo "11. 更新 sing-box"
+    echo "12. 更新本机脚本"
+    echo "13. 恢复网络参数"
+    echo "14. 卸载 sing-box"
+    echo "0. 退出"
+    read -r -p "请选择: " choice
+    case "$choice" in
+      1) show_status ;;
+      2) update_system ;;
+      3) enable_bbr ;;
+      4) network_tune ;;
+      5) speed_test ;;
+      6) trace_route ;;
+      7) check_ip_quality ;;
+      8) reality_checker_csv ;;
+      9) install_singbox "install" ;;
+      10) show_node_info ;;
+      11) install_singbox "sb-update" ;;
+      12) update_script ;;
+      13) network_reset ;;
+      14) uninstall_singbox ;;
+      0) echo "已退出管理脚本"; exit 0 ;;
+      *) echo "无效选择"; continue ;;
+    esac
+    pause_and_return
+  done
+else
+  case "$ACTION" in
+    update) update_system ;;
+    status) show_status ;;
+    speed-test) speed_test ;;
+    trace-route|trace) trace_route ;;
+    ip-check|ipquality) check_ip_quality ;;
+    csv-scan) reality_checker_csv ;;
+    node-info) show_node_info ;;
+    script-update) update_script ;;
+    sb-update) install_singbox "sb-update" ;;
+    bbr) enable_bbr ;;
+    net-tune) network_tune ;;
+    net-reset) network_reset ;;
+    uninstall) uninstall_singbox ;;
+    install) install_singbox "install" ;;
+    *) die "ACTION 只能是 menu/install/sb-update/script-update/update/bbr/net-tune/net-reset/speed-test/trace-route/ip-check/status/csv-scan/node-info/uninstall" ;;
+  esac
+  exit 0
+fi
