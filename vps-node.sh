@@ -19,10 +19,10 @@ SUB_PORT="${SUB_PORT:-2096}"
 SNI="${SNI:-auto}"                 # auto=从候选伪装站中选择 TCP/443 延迟最低者
 TAG="${TAG:-vps}"
 SB_VER="${SB_VER:-}"              # 留空=自动取最新版
-SCRIPT_VERSION="v1.0.35"
+SCRIPT_VERSION="v1.0.36"
 SCRIPT_URL="https://raw.githubusercontent.com/wzjwzj11/vps-node/${SCRIPT_VERSION}/vps-node.sh"
 SCRIPT_LATEST_URL="https://raw.githubusercontent.com/wzjwzj11/vps-node/main/vps-node.sh"
-ACTION="${ACTION:-menu}"       # menu / install / sb-update / script-update / update / bbr / net-tune / net-reset / speed-test / trace-route / status / csv-scan / node-info / uninstall
+ACTION="${ACTION:-menu}"       # menu / install / sb-update / script-update / update / bbr / net-tune / net-reset / speed-test / trace-route / ip-check / status / csv-scan / node-info / uninstall
 REALITYCHECKER_VERSION="${REALITYCHECKER_VERSION:-v2.2.3}"
 REALITYSCAN_DIR="${REALITYSCAN_DIR:-/root/reality-scan}"
 SNI_FILE="/etc/sing-box/reality_sni"
@@ -373,6 +373,23 @@ trace_route() {
   nexttrace -T "$target_ip" || nexttrace "$target_ip"
 }
 
+check_ip_quality() {
+  echo "========== IP 质量与流媒体/AI 解锁体检 =========="
+  echo "项目来源: https://github.com/xykt/IPQuality"
+  info "正在启动 IP 质量体检 (测试原生/家宽属性、欺诈风险分、流媒体与 ChatGPT 解锁)..."
+  local tmp
+  tmp="$(mktemp /tmp/ipquality.XXXXXX.sh)"
+  if curl -fsSL --retry 3 --connect-timeout 10 "https://raw.githubusercontent.com/xykt/IPQuality/main/ip.sh" -o "$tmp" || \
+     curl -fsSL --retry 3 --connect-timeout 10 "https://Check.Place" -o "$tmp" || \
+     curl -fsSL --retry 3 --connect-timeout 10 "https://IP.Check.Place" -o "$tmp"; then
+    bash "$tmp"
+    rm -f "$tmp"
+  else
+    rm -f "$tmp"
+    die "获取 IPQuality 脚本失败，请检查网络连接"
+  fi
+}
+
 reality_checker_csv() {
   if ! command -v curl >/dev/null 2>&1 || ! command -v unzip >/dev/null 2>&1; then
     if command -v apt-get >/dev/null 2>&1; then apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq curl unzip
@@ -683,13 +700,14 @@ if [[ "$ACTION" == "menu" ]]; then
     echo "4. 网络参数优化（保守）"
     echo "5. 网络测速"
     echo "6. 回程路由测试 (NextTrace)"
-    echo "7. CSV Reality 扫描/修改域名"
-    echo "8. 安装/重建节点配置"
-    echo "9. 查询节点信息"
-    echo "10. 更新 sing-box"
-    echo "11. 更新本机脚本"
-    echo "12. 恢复网络参数"
-    echo "13. 卸载 sing-box"
+    echo "7. IP 质量体检 (IPQuality)"
+    echo "8. CSV Reality 扫描/修改域名"
+    echo "9. 安装/重建节点配置"
+    echo "10. 查询节点信息"
+    echo "11. 更新 sing-box"
+    echo "12. 更新本机脚本"
+    echo "13. 恢复网络参数"
+    echo "14. 卸载 sing-box"
     echo "0. 退出"
     read -r -p "请选择: " choice
     case "$choice" in
@@ -699,13 +717,14 @@ if [[ "$ACTION" == "menu" ]]; then
       4) ACTION=net-tune; break ;;
       5) ACTION=speed-test; break ;;
       6) ACTION=trace-route; break ;;
-      7) ACTION=csv-scan; break ;;
-      8) ACTION=install; break ;;
-      9) ACTION=node-info; break ;;
-      10) ACTION=sb-update; SB_VER=""; break ;;
-      11) ACTION=script-update; break ;;
-      12) ACTION=net-reset; break ;;
-      13) ACTION=uninstall; break ;;
+      7) ACTION=ip-check; break ;;
+      8) ACTION=csv-scan; break ;;
+      9) ACTION=install; break ;;
+      10) ACTION=node-info; break ;;
+      11) ACTION=sb-update; SB_VER=""; break ;;
+      12) ACTION=script-update; break ;;
+      13) ACTION=net-reset; break ;;
+      14) ACTION=uninstall; break ;;
       0) exit 0 ;;
       *) echo "无效选择" ;;
     esac
@@ -728,6 +747,8 @@ case "$ACTION" in
     speed_test; exit 0 ;;
   trace-route|trace)
     trace_route; exit 0 ;;
+  ip-check|ipquality)
+    check_ip_quality; exit 0 ;;
   csv-scan)
     reality_checker_csv; exit 0 ;;
   node-info)
@@ -754,7 +775,7 @@ case "$ACTION" in
     systemctl daemon-reload
     echo "sing-box 已卸载（不会删除系统包和防火墙规则）"; exit 0 ;;
   install|sb-update|script-update|node-info) ;;
-  *) die "ACTION 只能是 menu/install/sb-update/script-update/update/bbr/net-tune/net-reset/speed-test/trace-route/status/csv-scan/node-info/uninstall" ;;
+  *) die "ACTION 只能是 menu/install/sb-update/script-update/update/bbr/net-tune/net-reset/speed-test/trace-route/ip-check/status/csv-scan/node-info/uninstall" ;;
 esac
 
 
